@@ -1,94 +1,77 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
+/**
+ * @packageDocumentation
+ * @module fileeditor-extension
+ */
 
 import {
   ILayoutRestorer,
   JupyterFrontEnd,
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
-
-import { ICommandPalette, WidgetTracker } from '@jupyterlab/apputils';
-
-import { CodeEditor, IEditorServices } from '@jupyterlab/codeeditor';
-
-import { IConsoleTracker } from '@jupyterlab/console';
-
 import {
-  ISettingRegistry,
-  MarkdownCodeBlocks,
-  PathExt
-} from '@jupyterlab/coreutils';
-
-import { IDocumentWidget } from '@jupyterlab/docregistry';
-
-import { IFileBrowserFactory } from '@jupyterlab/filebrowser';
-
+  createToolbarFactory,
+  ICommandPalette,
+  ISanitizer,
+  ISessionContextDialogs,
+  IToolbarWidgetRegistry,
+  MainAreaWidget,
+  Sanitizer,
+  SessionContextDialogs,
+  WidgetTracker
+} from '@jupyterlab/apputils';
+import {
+  CodeViewerWidget,
+  IEditorServices,
+  IPositionModel
+} from '@jupyterlab/codeeditor';
+import {
+  IEditorExtensionRegistry,
+  IEditorLanguageRegistry,
+  IEditorThemeRegistry
+} from '@jupyterlab/codemirror';
+import { ICompletionProviderManager } from '@jupyterlab/completer';
+import { IConsoleTracker } from '@jupyterlab/console';
+import { DocumentRegistry, IDocumentWidget } from '@jupyterlab/docregistry';
+import { ISearchProviderRegistry } from '@jupyterlab/documentsearch';
+import { IDefaultFileBrowser } from '@jupyterlab/filebrowser';
 import {
   FileEditor,
+  FileEditorAdapter,
   FileEditorFactory,
+  FileEditorSearchProvider,
   IEditorTracker,
+  LaTeXTableOfContentsFactory,
+  MarkdownTableOfContentsFactory,
+  PythonTableOfContentsFactory,
   TabSpaceStatus
 } from '@jupyterlab/fileeditor';
-
 import { ILauncher } from '@jupyterlab/launcher';
-
 import {
-  IEditMenu,
-  IFileMenu,
-  IMainMenu,
-  IRunMenu,
-  IViewMenu
-} from '@jupyterlab/mainmenu';
-
+  ILSPCodeExtractorsManager,
+  ILSPDocumentConnectionManager,
+  ILSPFeatureManager,
+  IWidgetLSPAdapterTracker,
+  WidgetLSPAdapterTracker
+} from '@jupyterlab/lsp';
+import { IMainMenu } from '@jupyterlab/mainmenu';
+import { IObservableList } from '@jupyterlab/observables';
+import { IRenderMime } from '@jupyterlab/rendermime-interfaces';
+import { Session } from '@jupyterlab/services';
+import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { IStatusBar } from '@jupyterlab/statusbar';
+import { ITableOfContentsRegistry } from '@jupyterlab/toc';
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
+import { IFormRendererRegistry, MenuSvg } from '@jupyterlab/ui-components';
+import { find } from '@lumino/algorithm';
+import { JSONObject } from '@lumino/coreutils';
+import { Widget } from '@lumino/widgets';
 
-import { JSONObject, ReadonlyJSONObject } from '@phosphor/coreutils';
+import { CommandIDs, Commands, FACTORY, IFileTypeData } from './commands';
+import { editorSyntaxStatus } from './syntaxstatus';
 
-import { Menu } from '@phosphor/widgets';
-
-/**
- * The class name for the text editor icon from the default theme.
- */
-const EDITOR_ICON_CLASS = 'jp-MaterialIcon jp-TextEditorIcon';
-
-/**
- * The class name for the text editor icon from the default theme.
- */
-const MARKDOWN_ICON_CLASS = 'jp-MaterialIcon jp-MarkdownIcon';
-
-/**
- * The name of the factory that creates editor widgets.
- */
-const FACTORY = 'Editor';
-
-/**
- * The command IDs used by the fileeditor plugin.
- */
-namespace CommandIDs {
-  export const createNew = 'fileeditor:create-new';
-
-  export const createNewMarkdown = 'fileeditor:create-new-markdown-file';
-
-  export const changeFontSize = 'fileeditor:change-font-size';
-
-  export const lineNumbers = 'fileeditor:toggle-line-numbers';
-
-  export const lineWrap = 'fileeditor:toggle-line-wrap';
-
-  export const changeTabs = 'fileeditor:change-tabs';
-
-  export const matchBrackets = 'fileeditor:toggle-match-brackets';
-
-  export const autoClosingBrackets = 'fileeditor:toggle-autoclosing-brackets';
-
-  export const createConsole = 'fileeditor:create-console';
-
-  export const runCode = 'fileeditor:run-code';
-
-  export const runAllCode = 'fileeditor:run-all';
-
-  export const markdownPreview = 'fileeditor:markdown-preview';
-}
+export { Commands } from './commands';
 
 /**
  * The editor tracker extension.
@@ -96,13 +79,27 @@ namespace CommandIDs {
 const plugin: JupyterFrontEndPlugin<IEditorTracker> = {
   activate,
   id: '@jupyterlab/fileeditor-extension:plugin',
+  description: 'Provides the file editor widget tracker.',
   requires: [
-    IConsoleTracker,
     IEditorServices,
-    IFileBrowserFactory,
+    IEditorExtensionRegistry,
+    IEditorLanguageRegistry,
+    IEditorThemeRegistry,
+    IDefaultFileBrowser,
     ISettingRegistry
   ],
-  optional: [ICommandPalette, ILauncher, IMainMenu, ILayoutRestorer],
+  optional: [
+    IConsoleTracker,
+    ICommandPalette,
+    ILauncher,
+    IMainMenu,
+    ILayoutRestorer,
+    ISessionContextDialogs,
+    ITableOfContentsRegistry,
+    IToolbarWidgetRegistry,
+    ITranslator,
+    IFormRendererRegistry
+  ],
   provides: IEditorTracker,
   autoStart: true
 };
@@ -113,49 +110,62 @@ const plugin: JupyterFrontEndPlugin<IEditorTracker> = {
  */
 export const tabSpaceStatus: JupyterFrontEndPlugin<void> = {
   id: '@jupyterlab/fileeditor-extension:tab-space-status',
+  description: 'Adds a file editor indentation status widget.',
   autoStart: true,
-  requires: [IStatusBar, IEditorTracker, ISettingRegistry],
+  requires: [
+    IEditorTracker,
+    IEditorExtensionRegistry,
+    ISettingRegistry,
+    ITranslator
+  ],
+  optional: [IStatusBar],
   activate: (
     app: JupyterFrontEnd,
-    statusBar: IStatusBar,
     editorTracker: IEditorTracker,
-    settingRegistry: ISettingRegistry
+    extensions: IEditorExtensionRegistry,
+    settingRegistry: ISettingRegistry,
+    translator: ITranslator,
+    statusBar: IStatusBar | null
   ) => {
+    const trans = translator.load('jupyterlab');
+    if (!statusBar) {
+      // Automatically disable if statusbar missing
+      return;
+    }
     // Create a menu for switching tabs vs spaces.
-    const menu = new Menu({ commands: app.commands });
+    const menu = new MenuSvg({ commands: app.commands });
     const command = 'fileeditor:change-tabs';
     const { shell } = app;
     const args: JSONObject = {
-      insertSpaces: false,
-      size: 4,
-      name: 'Indent with Tab'
+      name: trans.__('Indent with Tab')
     };
     menu.addItem({ command, args });
-    for (let size of [1, 2, 4, 8]) {
-      let args: JSONObject = {
-        insertSpaces: true,
+    for (const size of ['1', '2', '4', '8']) {
+      const args: JSONObject = {
         size,
-        name: `Spaces: ${size} `
+        // Use a context to differentiate with string set as plural in 3.x
+        name: trans._p('v4', 'Spaces: %1', size)
       };
       menu.addItem({ command, args });
     }
 
     // Create the status item.
-    const item = new TabSpaceStatus({ menu });
+    const item = new TabSpaceStatus({ menu, translator });
 
     // Keep a reference to the code editor config from the settings system.
-    const updateSettings = (settings: ISettingRegistry.ISettings): void => {
-      item.model!.config = {
-        ...CodeEditor.defaultConfig,
-        ...(settings.get('editorConfig').composite as JSONObject)
-      };
+    const updateIndentUnit = (settings: ISettingRegistry.ISettings): void => {
+      item.model!.indentUnit =
+        (settings.get('editorConfig').composite as any)?.indentUnit ??
+        extensions.baseConfiguration.indentUnit ??
+        null;
     };
+
     void Promise.all([
       settingRegistry.load('@jupyterlab/fileeditor-extension:plugin'),
       app.restored
     ]).then(([settings]) => {
-      updateSettings(settings);
-      settings.changed.connect(updateSettings);
+      updateIndentUnit(settings);
+      settings.changed.connect(updateIndentUnit);
     });
 
     // Add the status item.
@@ -166,7 +176,9 @@ export const tabSpaceStatus: JupyterFrontEndPlugin<void> = {
         align: 'right',
         rank: 1,
         isActive: () => {
-          return shell.currentWidget && editorTracker.has(shell.currentWidget);
+          return (
+            !!shell.currentWidget && editorTracker.has(shell.currentWidget)
+          );
         }
       }
     );
@@ -174,9 +186,76 @@ export const tabSpaceStatus: JupyterFrontEndPlugin<void> = {
 };
 
 /**
+ * Cursor position.
+ */
+const lineColStatus: JupyterFrontEndPlugin<void> = {
+  id: '@jupyterlab/fileeditor-extension:cursor-position',
+  description: 'Adds a file editor cursor position status widget.',
+  activate: (
+    app: JupyterFrontEnd,
+    tracker: IEditorTracker,
+    positionModel: IPositionModel
+  ) => {
+    positionModel.addEditorProvider((widget: Widget | null) =>
+      Promise.resolve(
+        widget && tracker.has(widget)
+          ? (widget as IDocumentWidget<FileEditor>).content.editor
+          : null
+      )
+    );
+  },
+  requires: [IEditorTracker, IPositionModel],
+  autoStart: true
+};
+
+const completerPlugin: JupyterFrontEndPlugin<void> = {
+  id: '@jupyterlab/fileeditor-extension:completer',
+  description: 'Adds the completer capability to the file editor.',
+  requires: [IEditorTracker],
+  optional: [ICompletionProviderManager, ITranslator, ISanitizer],
+  activate: activateFileEditorCompleterService,
+  autoStart: true
+};
+
+/**
+ * A plugin to search file editors
+ */
+const searchProvider: JupyterFrontEndPlugin<void> = {
+  id: '@jupyterlab/fileeditor-extension:search',
+  description: 'Adds search capability to the file editor.',
+  requires: [ISearchProviderRegistry],
+  autoStart: true,
+  activate: (app: JupyterFrontEnd, registry: ISearchProviderRegistry) => {
+    registry.add('jp-fileeditorSearchProvider', FileEditorSearchProvider);
+  }
+};
+
+const languageServerPlugin: JupyterFrontEndPlugin<void> = {
+  id: '@jupyterlab/fileeditor-extension:language-server',
+  description: 'Adds Language Server capability to the file editor.',
+  requires: [
+    IEditorTracker,
+    ILSPDocumentConnectionManager,
+    ILSPFeatureManager,
+    ILSPCodeExtractorsManager,
+    IWidgetLSPAdapterTracker
+  ],
+  activate: activateFileEditorLanguageServer,
+  autoStart: true
+};
+
+/**
  * Export the plugins as default.
  */
-const plugins: JupyterFrontEndPlugin<any>[] = [plugin, tabSpaceStatus];
+const plugins: JupyterFrontEndPlugin<any>[] = [
+  plugin,
+  lineColStatus,
+  completerPlugin,
+  languageServerPlugin,
+  searchProvider,
+  editorSyntaxStatus,
+  tabSpaceStatus
+];
 export default plugins;
 
 /**
@@ -184,23 +263,54 @@ export default plugins;
  */
 function activate(
   app: JupyterFrontEnd,
-  consoleTracker: IConsoleTracker,
   editorServices: IEditorServices,
-  browserFactory: IFileBrowserFactory,
+  extensions: IEditorExtensionRegistry,
+  languages: IEditorLanguageRegistry,
+  themes: IEditorThemeRegistry,
+  fileBrowser: IDefaultFileBrowser,
   settingRegistry: ISettingRegistry,
+  consoleTracker: IConsoleTracker | null,
   palette: ICommandPalette | null,
   launcher: ILauncher | null,
   menu: IMainMenu | null,
-  restorer: ILayoutRestorer | null
+  restorer: ILayoutRestorer | null,
+  sessionDialogs_: ISessionContextDialogs | null,
+  tocRegistry: ITableOfContentsRegistry | null,
+  toolbarRegistry: IToolbarWidgetRegistry | null,
+  translator_: ITranslator | null,
+  formRegistry: IFormRendererRegistry | null
 ): IEditorTracker {
   const id = plugin.id;
+  const translator = translator_ ?? nullTranslator;
+  const sessionDialogs =
+    sessionDialogs_ ?? new SessionContextDialogs({ translator });
+  const trans = translator.load('jupyterlab');
   const namespace = 'editor';
+  let toolbarFactory:
+    | ((
+        widget: IDocumentWidget<FileEditor>
+      ) => IObservableList<DocumentRegistry.IToolbarItem>)
+    | undefined;
+
+  if (toolbarRegistry) {
+    toolbarFactory = createToolbarFactory(
+      toolbarRegistry,
+      settingRegistry,
+      FACTORY,
+      id,
+      translator
+    );
+  }
+
   const factory = new FileEditorFactory({
     editorServices,
     factoryOptions: {
       name: FACTORY,
+      label: trans.__('Editor'),
       fileTypes: ['markdown', '*'], // Explicitly add the markdown fileType so
-      defaultFor: ['markdown', '*'] // it outranks the defaultRendered viewer.
+      defaultFor: ['markdown', '*'], // it outranks the defaultRendered viewer.
+      toolbarFactory,
+      translator
     }
   });
   const { commands, restored, shell } = app;
@@ -211,7 +321,60 @@ function activate(
     tracker.currentWidget !== null &&
     tracker.currentWidget === shell.currentWidget;
 
-  let config: CodeEditor.IConfig = { ...CodeEditor.defaultConfig };
+  const commonLanguageFileTypeData = new Map<string, IFileTypeData[]>([
+    [
+      'python',
+      [
+        {
+          fileExt: 'py',
+          iconName: 'ui-components:python',
+          launcherLabel: trans.__('Python File'),
+          paletteLabel: trans.__('New Python File'),
+          caption: trans.__('Create a new Python file')
+        }
+      ]
+    ],
+    [
+      'julia',
+      [
+        {
+          fileExt: 'jl',
+          iconName: 'ui-components:julia',
+          launcherLabel: trans.__('Julia File'),
+          paletteLabel: trans.__('New Julia File'),
+          caption: trans.__('Create a new Julia file')
+        }
+      ]
+    ],
+    [
+      'R',
+      [
+        {
+          fileExt: 'r',
+          iconName: 'ui-components:r-kernel',
+          launcherLabel: trans.__('R File'),
+          paletteLabel: trans.__('New R File'),
+          caption: trans.__('Create a new R file')
+        }
+      ]
+    ]
+  ]);
+
+  // Use available kernels to determine which common file types should have 'Create New' options in the Launcher, File Editor palette, and File menu
+  const getAvailableKernelFileTypes = async (): Promise<Set<IFileTypeData>> => {
+    const specsManager = app.serviceManager.kernelspecs;
+    await specsManager.ready;
+    let fileTypes = new Set<IFileTypeData>();
+    const specs = specsManager.specs?.kernelspecs ?? {};
+    Object.keys(specs).forEach(spec => {
+      const specModel = specs[spec];
+      if (specModel) {
+        const exts = commonLanguageFileTypeData.get(specModel.language);
+        exts?.forEach(ext => fileTypes.add(ext));
+      }
+    });
+    return fileTypes;
+  };
 
   // Handle state restoration.
   if (restorer) {
@@ -222,539 +385,299 @@ function activate(
     });
   }
 
-  /**
-   * Update the setting values.
-   */
-  function updateSettings(settings: ISettingRegistry.ISettings): void {
-    config = {
-      ...CodeEditor.defaultConfig,
-      ...(settings.get('editorConfig').composite as JSONObject)
-    };
-
-    // Trigger a refresh of the rendered commands
-    app.commands.notifyCommandChanged();
-  }
-
-  /**
-   * Update the settings of the current tracker instances.
-   */
-  function updateTracker(): void {
-    tracker.forEach(widget => {
-      updateWidget(widget.content);
-    });
-  }
-
-  /**
-   * Update the settings of a widget.
-   */
-  function updateWidget(widget: FileEditor): void {
-    const editor = widget.editor;
-    Object.keys(config).forEach((key: keyof CodeEditor.IConfig) => {
-      editor.setOption(key, config[key]);
-    });
-  }
-
   // Add a console creator to the File menu
   // Fetch the initial state of the settings.
   Promise.all([settingRegistry.load(id), restored])
     .then(([settings]) => {
-      updateSettings(settings);
-      updateTracker();
+      // As the menu are defined in the settings we must ensure they are loaded
+      // before updating dynamically the submenu
+      if (menu) {
+        const languageMenu = menu.viewMenu.items.find(
+          item =>
+            item.type === 'submenu' &&
+            item.submenu?.id === 'jp-mainmenu-view-codemirror-language'
+        )?.submenu;
+
+        if (languageMenu) {
+          languages
+            .getLanguages()
+            .sort((a, b) => {
+              const aName = a.name;
+              const bName = b.name;
+              return aName.localeCompare(bName);
+            })
+            .forEach(spec => {
+              // Avoid mode name with a curse word.
+              if (spec.name.toLowerCase().indexOf('brainf') === 0) {
+                return;
+              }
+              languageMenu.addItem({
+                command: CommandIDs.changeLanguage,
+                args: { ...spec } as any // TODO: Casting to `any` until lumino typings are fixed
+              });
+            });
+        }
+        const themeMenu = menu.settingsMenu.items.find(
+          item =>
+            item.type === 'submenu' &&
+            item.submenu?.id === 'jp-mainmenu-settings-codemirror-theme'
+        )?.submenu;
+
+        if (themeMenu) {
+          for (const theme of themes.themes) {
+            themeMenu.addItem({
+              command: CommandIDs.changeTheme,
+              args: {
+                theme: theme.name,
+                displayName: theme.displayName ?? theme.name
+              }
+            });
+          }
+        }
+
+        // Add go to line capabilities to the edit menu.
+        menu.editMenu.goToLiners.add({
+          id: CommandIDs.goToLine,
+          isEnabled: (w: Widget) =>
+            tracker.currentWidget !== null && tracker.has(w)
+        });
+      }
+
+      Commands.updateSettings(settings, commands);
+      Commands.updateTracker(tracker);
       settings.changed.connect(() => {
-        updateSettings(settings);
-        updateTracker();
+        Commands.updateSettings(settings, commands);
+        Commands.updateTracker(tracker);
       });
     })
     .catch((reason: Error) => {
       console.error(reason.message);
-      updateTracker();
+      Commands.updateTracker(tracker);
     });
 
-  factory.widgetCreated.connect((sender, widget) => {
-    widget.title.icon = EDITOR_ICON_CLASS;
+  if (formRegistry) {
+    const CMRenderer = formRegistry.getRenderer(
+      '@jupyterlab/codemirror-extension:plugin.defaultConfig'
+    );
+    if (CMRenderer) {
+      formRegistry.addRenderer(
+        '@jupyterlab/fileeditor-extension:plugin.editorConfig',
+        CMRenderer
+      );
+    }
+  }
 
+  factory.widgetCreated.connect((sender, widget) => {
     // Notify the widget tracker if restore data needs to update.
     widget.context.pathChanged.connect(() => {
       void tracker.save(widget);
     });
     void tracker.add(widget);
-    updateWidget(widget.content);
+    Commands.updateWidget(widget.content);
   });
   app.docRegistry.addWidgetFactory(factory);
 
   // Handle the settings of new widgets.
   tracker.widgetAdded.connect((sender, widget) => {
-    updateWidget(widget.content);
+    Commands.updateWidget(widget.content);
   });
 
-  // Add a command to change font size.
-  commands.addCommand(CommandIDs.changeFontSize, {
-    execute: args => {
-      const delta = Number(args['delta']);
-      if (Number.isNaN(delta)) {
-        console.error(
-          `${CommandIDs.changeFontSize}: delta arg must be a number`
-        );
-        return;
-      }
-      const style = window.getComputedStyle(document.documentElement);
-      const cssSize = parseInt(
-        style.getPropertyValue('--jp-code-font-size'),
-        10
-      );
-      const currentSize = config.fontSize || cssSize;
-      config.fontSize = currentSize + delta;
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
-    label: args => args['name'] as string
-  });
-
-  commands.addCommand(CommandIDs.lineNumbers, {
-    execute: () => {
-      config.lineNumbers = !config.lineNumbers;
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
+  Commands.addCommands(
+    app.commands,
+    settingRegistry,
+    trans,
+    id,
     isEnabled,
-    isToggled: () => config.lineNumbers,
-    label: 'Line Numbers'
-  });
+    tracker,
+    fileBrowser,
+    extensions,
+    languages,
+    consoleTracker,
+    sessionDialogs
+  );
 
-  type wrappingMode = 'on' | 'off' | 'wordWrapColumn' | 'bounded';
-
-  commands.addCommand(CommandIDs.lineWrap, {
-    execute: args => {
-      const lineWrap = (args['mode'] as wrappingMode) || 'off';
-      config.lineWrap = lineWrap;
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
-    isEnabled,
-    isToggled: args => {
-      const lineWrap = (args['mode'] as wrappingMode) || 'off';
-      return config.lineWrap === lineWrap;
-    },
-    label: 'Word Wrap'
-  });
-
-  commands.addCommand(CommandIDs.changeTabs, {
-    label: args => args['name'] as string,
-    execute: args => {
-      config.tabSize = (args['size'] as number) || 4;
-      config.insertSpaces = !!args['insertSpaces'];
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
-    isToggled: args => {
-      const insertSpaces = !!args['insertSpaces'];
-      const size = (args['size'] as number) || 4;
-      return config.insertSpaces === insertSpaces && config.tabSize === size;
+  const codeViewerTracker = new WidgetTracker<MainAreaWidget<CodeViewerWidget>>(
+    {
+      namespace: 'codeviewer'
     }
-  });
+  );
 
-  commands.addCommand(CommandIDs.matchBrackets, {
-    execute: () => {
-      config.matchBrackets = !config.matchBrackets;
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
-    label: 'Match Brackets',
-    isEnabled,
-    isToggled: () => config.matchBrackets
-  });
-
-  commands.addCommand(CommandIDs.autoClosingBrackets, {
-    execute: () => {
-      config.autoClosingBrackets = !config.autoClosingBrackets;
-      return settingRegistry
-        .set(id, 'editorConfig', (config as unknown) as JSONObject)
-        .catch((reason: Error) => {
-          console.error(`Failed to set ${id}: ${reason.message}`);
-        });
-    },
-    label: 'Auto Close Brackets for Text Editor',
-    isToggled: () => config.autoClosingBrackets
-  });
-
-  async function createConsole(
-    widget: IDocumentWidget<FileEditor>,
-    args?: ReadonlyJSONObject
-  ): Promise<void> {
-    const options = args || {};
-    const console = await commands.execute('console:create', {
-      activate: options['activate'],
-      name: widget.context.contentsModel.name,
-      path: widget.context.path,
-      preferredLanguage: widget.context.model.defaultKernelLanguage,
-      ref: widget.id,
-      insertMode: 'split-bottom'
-    });
-
-    widget.context.pathChanged.connect((sender, value) => {
-      console.session.setPath(value);
-      console.session.setName(widget.context.contentsModel.name);
+  // Handle state restoration for code viewers
+  if (restorer) {
+    void restorer.restore(codeViewerTracker, {
+      command: CommandIDs.openCodeViewer,
+      args: widget => ({
+        content: widget.content.content,
+        label: widget.content.title.label,
+        mimeType: widget.content.mimeType,
+        widgetId: widget.content.id
+      }),
+      name: widget => widget.content.id
     });
   }
 
-  commands.addCommand(CommandIDs.createConsole, {
-    execute: args => {
-      const widget = tracker.currentWidget;
-
-      if (!widget) {
-        return;
-      }
-
-      return createConsole(widget, args);
-    },
-    isEnabled,
-    label: 'Create Console for Editor'
-  });
-
-  commands.addCommand(CommandIDs.runCode, {
-    execute: () => {
-      // Run the appropriate code, taking into account a ```fenced``` code block.
-      const widget = tracker.currentWidget.content;
-
-      if (!widget) {
-        return;
-      }
-
-      let code = '';
-      const editor = widget.editor;
-      const path = widget.context.path;
-      const extension = PathExt.extname(path);
-      const selection = editor.getSelection();
-      const { start, end } = selection;
-      let selected = start.column !== end.column || start.line !== end.line;
-
-      if (selected) {
-        // Get the selected code from the editor.
-        const start = editor.getOffsetAt(selection.start);
-        const end = editor.getOffsetAt(selection.end);
-
-        code = editor.model.value.text.substring(start, end);
-      } else if (MarkdownCodeBlocks.isMarkdown(extension)) {
-        const { text } = editor.model.value;
-        const blocks = MarkdownCodeBlocks.findMarkdownCodeBlocks(text);
-
-        for (let block of blocks) {
-          if (block.startLine <= start.line && start.line <= block.endLine) {
-            code = block.code;
-            selected = true;
-            break;
-          }
-        }
-      }
-
-      if (!selected) {
-        // no selection, submit whole line and advance
-        code = editor.getLine(selection.start.line);
-        const cursor = editor.getCursorPosition();
-        if (cursor.line + 1 === editor.lineCount) {
-          let text = editor.model.value.text;
-          editor.model.value.text = text + '\n';
-        }
-        editor.setCursorPosition({
-          line: cursor.line + 1,
-          column: cursor.column
-        });
-      }
-
-      const activate = false;
-      if (code) {
-        return commands.execute('console:inject', { activate, code, path });
-      } else {
-        return Promise.resolve(void 0);
-      }
-    },
-    isEnabled,
-    label: 'Run Code'
-  });
-
-  commands.addCommand(CommandIDs.runAllCode, {
-    execute: () => {
-      let widget = tracker.currentWidget.content;
-
-      if (!widget) {
-        return;
-      }
-
-      let code = '';
-      let editor = widget.editor;
-      let text = editor.model.value.text;
-      let path = widget.context.path;
-      let extension = PathExt.extname(path);
-
-      if (MarkdownCodeBlocks.isMarkdown(extension)) {
-        // For Markdown files, run only code blocks.
-        const blocks = MarkdownCodeBlocks.findMarkdownCodeBlocks(text);
-        for (let block of blocks) {
-          code += block.code;
-        }
-      } else {
-        code = text;
-      }
-
-      const activate = false;
-      if (code) {
-        return commands.execute('console:inject', { activate, code, path });
-      } else {
-        return Promise.resolve(void 0);
-      }
-    },
-    isEnabled,
-    label: 'Run All Code'
-  });
-
-  commands.addCommand(CommandIDs.markdownPreview, {
-    execute: () => {
-      let widget = tracker.currentWidget;
-      if (!widget) {
-        return;
-      }
-      let path = widget.context.path;
-      return commands.execute('markdownviewer:open', {
-        path,
-        options: {
-          mode: 'split-right'
-        }
-      });
-    },
-    isVisible: () => {
-      let widget = tracker.currentWidget;
-      return (
-        (widget && PathExt.extname(widget.context.path) === '.md') || false
-      );
-    },
-    label: 'Show Markdown Preview'
-  });
-
-  // Function to create a new untitled text file, given
-  // the current working directory.
-  const createNew = (cwd: string, ext: string = 'txt') => {
-    return commands
-      .execute('docmanager:new-untitled', {
-        path: cwd,
-        type: 'file',
-        ext
-      })
-      .then(model => {
-        return commands.execute('docmanager:open', {
-          path: model.path,
-          factory: FACTORY
-        });
-      });
-  };
-
-  // Add a command for creating a new text file.
-  commands.addCommand(CommandIDs.createNew, {
-    label: args => (args['isPalette'] ? 'New Text File' : 'Text File'),
-    caption: 'Create a new text file',
-    iconClass: args => (args['isPalette'] ? '' : EDITOR_ICON_CLASS),
-    execute: args => {
-      let cwd = args['cwd'] || browserFactory.defaultBrowser.model.path;
-      return createNew(cwd as string);
-    }
-  });
-
-  // Add a command for creating a new Markdown file.
-  commands.addCommand(CommandIDs.createNewMarkdown, {
-    label: args => (args['isPalette'] ? 'New Markdown File' : 'Markdown File'),
-    caption: 'Create a new markdown file',
-    iconClass: args => (args['isPalette'] ? '' : MARKDOWN_ICON_CLASS),
-    execute: args => {
-      let cwd = args['cwd'] || browserFactory.defaultBrowser.model.path;
-      return createNew(cwd as string, 'md');
-    }
-  });
+  Commands.addOpenCodeViewerCommand(
+    app,
+    editorServices,
+    codeViewerTracker,
+    trans
+  );
 
   // Add a launcher item if the launcher is available.
   if (launcher) {
-    launcher.add({
-      command: CommandIDs.createNew,
-      category: 'Other',
-      rank: 1
-    });
-
-    launcher.add({
-      command: CommandIDs.createNewMarkdown,
-      category: 'Other',
-      rank: 2
-    });
+    Commands.addLauncherItems(launcher, trans);
   }
 
   if (palette) {
-    const category = 'Text Editor';
-    let args: JSONObject = {
-      insertSpaces: false,
-      size: 4,
-      name: 'Indent with Tab'
-    };
-    let command = 'fileeditor:change-tabs';
-    palette.addItem({ command, args, category });
-
-    for (let size of [1, 2, 4, 8]) {
-      let args: JSONObject = {
-        insertSpaces: true,
-        size,
-        name: `Spaces: ${size} `
-      };
-      palette.addItem({ command, args, category });
-    }
-
-    args = { isPalette: true };
-    command = CommandIDs.createNew;
-    palette.addItem({ command, args, category });
-
-    args = { isPalette: true };
-    command = CommandIDs.createNewMarkdown;
-    palette.addItem({ command, args, category });
-
-    args = { name: 'Increase Font Size', delta: 1 };
-    command = CommandIDs.changeFontSize;
-    palette.addItem({ command, args, category });
-
-    args = { name: 'Decrease Font Size', delta: -1 };
-    command = CommandIDs.changeFontSize;
-    palette.addItem({ command, args, category });
+    Commands.addPaletteItems(palette, trans);
   }
 
   if (menu) {
-    // Add the editing commands to the settings menu.
-    const tabMenu = new Menu({ commands });
-    tabMenu.title.label = 'Text Editor Indentation';
-    let args: JSONObject = {
-      insertSpaces: false,
-      size: 4,
-      name: 'Indent with Tab'
-    };
-    let command = 'fileeditor:change-tabs';
-    tabMenu.addItem({ command, args });
-
-    for (let size of [1, 2, 4, 8]) {
-      let args: JSONObject = {
-        insertSpaces: true,
-        size,
-        name: `Spaces: ${size} `
-      };
-      tabMenu.addItem({ command, args });
-    }
-
-    menu.settingsMenu.addGroup(
-      [
-        {
-          command: CommandIDs.changeFontSize,
-          args: { name: 'Increase Text Editor Font Size', delta: +1 }
-        },
-        {
-          command: CommandIDs.changeFontSize,
-          args: { name: 'Decrease Text Editor Font Size', delta: -1 }
-        },
-        { type: 'submenu', submenu: tabMenu },
-        { command: CommandIDs.autoClosingBrackets }
-      ],
-      30
-    );
-
-    // Add new text file creation to the file menu.
-    menu.fileMenu.newMenu.addGroup([{ command: CommandIDs.createNew }], 30);
-
-    // Add new markdown file creation to the file menu.
-    menu.fileMenu.newMenu.addGroup(
-      [{ command: CommandIDs.createNewMarkdown }],
-      30
-    );
-
-    // Add undo/redo hooks to the edit menu.
-    menu.editMenu.undoers.add({
-      tracker,
-      undo: widget => {
-        widget.content.editor.undo();
-      },
-      redo: widget => {
-        widget.content.editor.redo();
-      }
-    } as IEditMenu.IUndoer<IDocumentWidget<FileEditor>>);
-
-    // Add editor view options.
-    menu.viewMenu.editorViewers.add({
-      tracker,
-      toggleLineNumbers: widget => {
-        const lineNumbers = !widget.content.editor.getOption('lineNumbers');
-        widget.content.editor.setOption('lineNumbers', lineNumbers);
-      },
-      toggleWordWrap: widget => {
-        const oldValue = widget.content.editor.getOption('lineWrap');
-        const newValue = oldValue === 'off' ? 'on' : 'off';
-        widget.content.editor.setOption('lineWrap', newValue);
-      },
-      toggleMatchBrackets: widget => {
-        const matchBrackets = !widget.content.editor.getOption('matchBrackets');
-        widget.content.editor.setOption('matchBrackets', matchBrackets);
-      },
-      lineNumbersToggled: widget =>
-        widget.content.editor.getOption('lineNumbers'),
-      wordWrapToggled: widget =>
-        widget.content.editor.getOption('lineWrap') !== 'off',
-      matchBracketsToggled: widget =>
-        widget.content.editor.getOption('matchBrackets')
-    } as IViewMenu.IEditorViewer<IDocumentWidget<FileEditor>>);
-
-    // Add a console creator the the Kernel menu.
-    menu.fileMenu.consoleCreators.add({
-      tracker,
-      name: 'Editor',
-      createConsole
-    } as IFileMenu.IConsoleCreator<IDocumentWidget<FileEditor>>);
-
-    // Add a code runner to the Run menu.
-    menu.runMenu.codeRunners.add({
-      tracker,
-      noun: 'Code',
-      isEnabled: current =>
-        !!consoleTracker.find(c => c.session.path === current.context.path),
-      run: () => commands.execute(CommandIDs.runCode),
-      runAll: () => commands.execute(CommandIDs.runAllCode),
-      restartAndRunAll: current => {
-        const console = consoleTracker.find(
-          console => console.session.path === current.context.path
-        );
-        if (console) {
-          return console.session.restart().then(restarted => {
-            if (restarted) {
-              void commands.execute(CommandIDs.runAllCode);
-            }
-            return restarted;
-          });
-        }
-      }
-    } as IRunMenu.ICodeRunner<IDocumentWidget<FileEditor>>);
+    Commands.addMenuItems(menu, tracker, consoleTracker, isEnabled);
   }
 
-  app.contextMenu.addItem({
-    command: CommandIDs.createConsole,
-    selector: '.jp-FileEditor'
-  });
-  app.contextMenu.addItem({
-    command: CommandIDs.markdownPreview,
-    selector: '.jp-FileEditor'
-  });
+  getAvailableKernelFileTypes()
+    .then(availableKernelFileTypes => {
+      if (launcher) {
+        Commands.addKernelLanguageLauncherItems(
+          launcher,
+          trans,
+          availableKernelFileTypes
+        );
+      }
+
+      if (palette) {
+        Commands.addKernelLanguagePaletteItems(
+          palette,
+          trans,
+          availableKernelFileTypes
+        );
+      }
+
+      if (menu) {
+        Commands.addKernelLanguageMenuItems(menu, availableKernelFileTypes);
+      }
+    })
+    .catch((reason: Error) => {
+      console.error(reason.message);
+    });
+
+  if (tocRegistry) {
+    tocRegistry.add(new LaTeXTableOfContentsFactory(tracker));
+    tocRegistry.add(new MarkdownTableOfContentsFactory(tracker));
+    tocRegistry.add(new PythonTableOfContentsFactory(tracker));
+  }
 
   return tracker;
+}
+
+/**
+ * Activate the completer service for file editor.
+ */
+function activateFileEditorCompleterService(
+  app: JupyterFrontEnd,
+  editorTracker: IEditorTracker,
+  manager: ICompletionProviderManager | null,
+  translator: ITranslator | null,
+  appSanitizer: IRenderMime.ISanitizer | null
+): void {
+  if (!manager) {
+    return;
+  }
+
+  Commands.addCompleterCommands(
+    app.commands,
+    editorTracker,
+    manager,
+    translator
+  );
+  const sessionManager = app.serviceManager.sessions;
+  const sanitizer = appSanitizer ?? new Sanitizer();
+  const _activeSessions = new Map<string, Session.ISessionConnection>();
+  const updateCompleter = async (
+    _: IEditorTracker,
+    widget: IDocumentWidget<FileEditor>
+  ) => {
+    const completerContext = {
+      editor: widget.content.editor,
+      widget
+    };
+
+    await manager.updateCompleter(completerContext);
+    const onRunningChanged = (
+      _: Session.IManager,
+      models: Session.IModel[]
+    ) => {
+      const oldSession = _activeSessions.get(widget.id);
+      // Search for a matching path.
+      const model = find(models, m => m.path === widget.context.path);
+      if (model) {
+        // If there is a matching path, but it is the same
+        // session as we previously had, do nothing.
+        if (oldSession && oldSession.id === model.id) {
+          return;
+        }
+        // Otherwise, dispose of the old session and reset to
+        // a new CompletionConnector.
+        if (oldSession) {
+          _activeSessions.delete(widget.id);
+          oldSession.dispose();
+        }
+        const session = sessionManager.connectTo({ model });
+        const newCompleterContext = {
+          editor: widget.content.editor,
+          widget,
+          session,
+          sanitizer
+        };
+        manager.updateCompleter(newCompleterContext).catch(console.error);
+        _activeSessions.set(widget.id, session);
+      } else {
+        // If we didn't find a match, make sure
+        // the connector is the contextConnector and
+        // dispose of any previous connection.
+        if (oldSession) {
+          _activeSessions.delete(widget.id);
+          oldSession.dispose();
+        }
+      }
+    };
+
+    onRunningChanged(sessionManager, Array.from(sessionManager.running()));
+    sessionManager.runningChanged.connect(onRunningChanged);
+
+    widget.disposed.connect(() => {
+      sessionManager.runningChanged.disconnect(onRunningChanged);
+      const session = _activeSessions.get(widget.id);
+      if (session) {
+        _activeSessions.delete(widget.id);
+        session.dispose();
+      }
+    });
+  };
+  editorTracker.widgetAdded.connect(updateCompleter);
+  manager.activeProvidersChanged.connect(() => {
+    editorTracker.forEach(editorWidget => {
+      updateCompleter(editorTracker, editorWidget).catch(console.error);
+    });
+  });
+}
+
+function activateFileEditorLanguageServer(
+  app: JupyterFrontEnd,
+  editors: IEditorTracker,
+  connectionManager: ILSPDocumentConnectionManager,
+  featureManager: ILSPFeatureManager,
+  extractorManager: ILSPCodeExtractorsManager,
+  adapterTracker: IWidgetLSPAdapterTracker
+): void {
+  editors.widgetAdded.connect(async (_, editor) => {
+    const adapter = new FileEditorAdapter(editor, {
+      connectionManager,
+      featureManager,
+      foreignCodeExtractorsManager: extractorManager,
+      docRegistry: app.docRegistry
+    });
+    (adapterTracker as WidgetLSPAdapterTracker).add(adapter);
+  });
 }

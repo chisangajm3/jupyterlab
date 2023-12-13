@@ -10,7 +10,25 @@
       "path": "../application"
     },
     {
+      "path": "../coreutils"
+    },
+    {
+      "path": "../docregistry"
+    },
+    {
+      "path": "../rendermime-interfaces"
+    },
+    {
       "path": "../running"
+    },
+    {
+      "path": "../services"
+    },
+    {
+      "path": "../translation"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

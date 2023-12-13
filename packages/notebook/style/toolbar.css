@@ -7,6 +7,10 @@
 | Variables
 |----------------------------------------------------------------------------*/
 
+:root {
+  --jp-notebook-toolbar-padding: 2px 5px 2px 2px;
+}
+
 /*-----------------------------------------------------------------------------
 
 /*-----------------------------------------------------------------------------
@@ -14,7 +18,10 @@
 |----------------------------------------------------------------------------*/
 
 .jp-NotebookPanel-toolbar {
-  padding: 2px;
+  padding: var(--jp-notebook-toolbar-padding);
+
+  /* disable paint containment from lumino 2.0 default strict CSS containment */
+  contain: style size !important;
 }
 
 .jp-Toolbar-item.jp-Notebook-toolbarCellType .jp-select-wrapper.jp-mod-focused {
@@ -30,6 +37,10 @@
   display: block;
 }
 
-.jp-Notebook-toolbarCellTypeDropdown span {
-  top: 5px !important;
+.jp-Notebook-toolbarCellTypeDropdown select:focus-visible {
+  outline-color: var(--accent-fill-focus);
+}
+
+.jp-Toolbar > .jp-Toolbar-responsive-opener {
+  margin-left: auto;
 }

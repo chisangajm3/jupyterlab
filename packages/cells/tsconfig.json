@@ -22,6 +22,15 @@
       "path": "../coreutils"
     },
     {
+      "path": "../documentsearch"
+    },
+    {
+      "path": "../filebrowser"
+    },
+    {
+      "path": "../nbformat"
+    },
+    {
       "path": "../observables"
     },
     {
@@ -32,6 +41,15 @@
     },
     {
       "path": "../services"
+    },
+    {
+      "path": "../toc"
+    },
+    {
+      "path": "../translation"
+    },
+    {
+      "path": "../ui-components"
     }
   ]
 }

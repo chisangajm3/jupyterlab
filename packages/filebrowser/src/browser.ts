@@ -1,28 +1,25 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { showErrorMessage, Toolbar, ToolbarButton } from '@jupyterlab/apputils';
-
+import { showErrorMessage } from '@jupyterlab/apputils';
 import { IDocumentManager } from '@jupyterlab/docmanager';
-
 import { Contents, ServerConnection } from '@jupyterlab/services';
-
-import { IIterator } from '@phosphor/algorithm';
-
-import { PanelLayout, Widget } from '@phosphor/widgets';
-
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
+import { SidePanel } from '@jupyterlab/ui-components';
+import { Panel } from '@lumino/widgets';
 import { BreadCrumbs } from './crumbs';
-
 import { DirListing } from './listing';
-
-import { FileBrowserModel } from './model';
-
-import { Uploader } from './upload';
+import { FilterFileBrowserModel } from './model';
 
 /**
  * The class name added to file browsers.
  */
 const FILE_BROWSER_CLASS = 'jp-FileBrowser';
+
+/**
+ * The class name added to file browser panel (gather filter, breadcrumbs and listing).
+ */
+const FILE_BROWSER_PANEL_CLASS = 'jp-FileBrowser-Panel';
 
 /**
  * The class name added to the filebrowser crumbs node.
@@ -46,226 +43,59 @@ const LISTING_CLASS = 'jp-FileBrowser-listing';
  * and presents itself as a flat list of files and directories with
  * breadcrumbs.
  */
-export class FileBrowser extends Widget {
+export class FileBrowser extends SidePanel {
   /**
    * Construct a new file browser.
    *
-   * @param model - The file browser view model.
+   * @param options - The file browser options.
    */
   constructor(options: FileBrowser.IOptions) {
-    super();
+    super({ content: new Panel(), translator: options.translator });
     this.addClass(FILE_BROWSER_CLASS);
+    this.toolbar.addClass(TOOLBAR_CLASS);
     this.id = options.id;
+    const translator = (this.translator = options.translator ?? nullTranslator);
 
     const model = (this.model = options.model);
     const renderer = options.renderer;
 
     model.connectionFailure.connect(this._onConnectionFailure, this);
     this._manager = model.manager;
-    this._crumbs = new BreadCrumbs({ model });
-    this.toolbar = new Toolbar<Widget>();
 
-    this._directoryPending = false;
-    let newFolder = new ToolbarButton({
-      iconClassName: 'jp-NewFolderIcon',
-      onClick: () => {
-        this.createNewDirectory();
-      },
-      tooltip: 'New Folder'
+    this.toolbar.node.setAttribute(
+      'aria-label',
+      this._trans.__('file browser')
+    );
+
+    // File browser widgets container
+    this.mainPanel = new Panel();
+    this.mainPanel.addClass(FILE_BROWSER_PANEL_CLASS);
+    this.mainPanel.title.label = this._trans.__('File Browser');
+
+    this.crumbs = new BreadCrumbs({ model, translator });
+    this.crumbs.addClass(CRUMBS_CLASS);
+
+    this.listing = this.createDirListing({
+      model,
+      renderer,
+      translator
     });
+    this.listing.addClass(LISTING_CLASS);
 
-    let uploader = new Uploader({ model });
+    this.mainPanel.addWidget(this.crumbs);
+    this.mainPanel.addWidget(this.listing);
 
-    let refresher = new ToolbarButton({
-      iconClassName: 'jp-RefreshIcon',
-      onClick: () => {
-        void model.refresh();
-      },
-      tooltip: 'Refresh File List'
-    });
+    this.addWidget(this.mainPanel);
 
-    this.toolbar.addItem('newFolder', newFolder);
-    this.toolbar.addItem('upload', uploader);
-    this.toolbar.addItem('refresher', refresher);
-
-    this._listing = new DirListing({ model, renderer });
-
-    this._crumbs.addClass(CRUMBS_CLASS);
-    this.toolbar.addClass(TOOLBAR_CLASS);
-    this._listing.addClass(LISTING_CLASS);
-
-    let layout = new PanelLayout();
-    layout.addWidget(this.toolbar);
-    layout.addWidget(this._crumbs);
-    layout.addWidget(this._listing);
-
-    this.layout = layout;
-    void model.restore(this.id);
+    if (options.restore !== false) {
+      void model.restore(this.id);
+    }
   }
 
   /**
    * The model used by the file browser.
    */
-  readonly model: FileBrowserModel;
-
-  /**
-   * The toolbar used by the file browser.
-   */
-  readonly toolbar: Toolbar<Widget>;
-
-  /**
-   * Create an iterator over the listing's selected items.
-   *
-   * @returns A new iterator over the listing's selected items.
-   */
-  selectedItems(): IIterator<Contents.IModel> {
-    return this._listing.selectedItems();
-  }
-
-  /**
-   * Select an item by name.
-   *
-   * @param name - The name of the item to select.
-   */
-  async selectItemByName(name: string) {
-    await this._listing.selectItemByName(name);
-  }
-
-  clearSelectedItems() {
-    this._listing.clearSelectedItems();
-  }
-
-  /**
-   * Rename the first currently selected item.
-   *
-   * @returns A promise that resolves with the new name of the item.
-   */
-  rename(): Promise<string> {
-    return this._listing.rename();
-  }
-
-  /**
-   * Cut the selected items.
-   */
-  cut(): void {
-    this._listing.cut();
-  }
-
-  /**
-   * Copy the selected items.
-   */
-  copy(): void {
-    this._listing.copy();
-  }
-
-  /**
-   * Paste the items from the clipboard.
-   *
-   * @returns A promise that resolves when the operation is complete.
-   */
-  paste(): Promise<void> {
-    return this._listing.paste();
-  }
-
-  /**
-   * Create a new directory
-   */
-  createNewDirectory(): void {
-    if (this._directoryPending === true) {
-      return;
-    }
-    this._directoryPending = true;
-    // TODO: We should provide a hook into when the
-    // directory is done being created. This probably
-    // means storing a pendingDirectory promise and
-    // returning that if there is already a directory
-    // request.
-    void this._manager
-      .newUntitled({
-        path: this.model.path,
-        type: 'directory'
-      })
-      .then(async model => {
-        await this._listing.selectItemByName(model.name);
-        this._directoryPending = false;
-      })
-      .catch(err => {
-        this._directoryPending = false;
-      });
-  }
-
-  /**
-   * Delete the currently selected item(s).
-   *
-   * @returns A promise that resolves when the operation is complete.
-   */
-  delete(): Promise<void> {
-    return this._listing.delete();
-  }
-
-  /**
-   * Duplicate the currently selected item(s).
-   *
-   * @returns A promise that resolves when the operation is complete.
-   */
-  duplicate(): Promise<void> {
-    return this._listing.duplicate();
-  }
-
-  /**
-   * Download the currently selected item(s).
-   */
-  download(): Promise<void> {
-    return this._listing.download();
-  }
-
-  /**
-   * Shut down kernels on the applicable currently selected items.
-   *
-   * @returns A promise that resolves when the operation is complete.
-   */
-  shutdownKernels(): Promise<void> {
-    return this._listing.shutdownKernels();
-  }
-
-  /**
-   * Select next item.
-   */
-  selectNext(): void {
-    this._listing.selectNext();
-  }
-
-  /**
-   * Select previous item.
-   */
-  selectPrevious(): void {
-    this._listing.selectPrevious();
-  }
-
-  /**
-   * Find a model given a click.
-   *
-   * @param event - The mouse event.
-   *
-   * @returns The model for the selected file.
-   */
-  modelForClick(event: MouseEvent): Contents.IModel | undefined {
-    return this._listing.modelForClick(event);
-  }
-
-  /**
-   * Handle a connection lost signal from the model.
-   */
-  private _onConnectionFailure(sender: FileBrowserModel, args: Error): void {
-    if (
-      args instanceof ServerConnection.ResponseError &&
-      args.response.status === 404
-    ) {
-      const title = 'Directory not found';
-      args.message = `Directory not found: "${this.model.path}"`;
-      void showErrorMessage(title, args);
-    }
-  }
+  readonly model: FilterFileBrowserModel;
 
   /**
    * Whether to show active file in file browser
@@ -278,11 +108,314 @@ export class FileBrowser extends Widget {
     this._navigateToCurrentDirectory = value;
   }
 
-  private _crumbs: BreadCrumbs;
-  private _listing: DirListing;
+  /**
+   * Whether to show the last modified column
+   */
+  get showLastModifiedColumn(): boolean {
+    return this._showLastModifiedColumn;
+  }
+
+  set showLastModifiedColumn(value: boolean) {
+    if (this.listing.setColumnVisibility) {
+      this.listing.setColumnVisibility('last_modified', value);
+      this._showLastModifiedColumn = value;
+    } else {
+      console.warn('Listing does not support toggling column visibility');
+    }
+  }
+
+  /**
+   * Whether to show the full path in the breadcrumbs
+   */
+  get showFullPath(): boolean {
+    return this.crumbs.fullPath;
+  }
+
+  set showFullPath(value: boolean) {
+    this.crumbs.fullPath = value;
+  }
+
+  /**
+   * Whether to show the file size column
+   */
+  get showFileSizeColumn(): boolean {
+    return this._showFileSizeColumn;
+  }
+
+  set showFileSizeColumn(value: boolean) {
+    if (this.listing.setColumnVisibility) {
+      this.listing.setColumnVisibility('file_size', value);
+      this._showFileSizeColumn = value;
+    } else {
+      console.warn('Listing does not support toggling column visibility');
+    }
+  }
+
+  /**
+   * Whether to show hidden files
+   */
+  get showHiddenFiles(): boolean {
+    return this._showHiddenFiles;
+  }
+
+  set showHiddenFiles(value: boolean) {
+    this.model.showHiddenFiles(value);
+    this._showHiddenFiles = value;
+  }
+
+  /**
+   * Whether to show checkboxes next to files and folders
+   */
+  get showFileCheckboxes(): boolean {
+    return this._showFileCheckboxes;
+  }
+
+  set showFileCheckboxes(value: boolean) {
+    if (this.listing.setColumnVisibility) {
+      this.listing.setColumnVisibility('is_selected', value);
+      this._showFileCheckboxes = value;
+    } else {
+      console.warn('Listing does not support toggling column visibility');
+    }
+  }
+
+  /**
+   * Whether to sort notebooks above other files
+   */
+  get sortNotebooksFirst(): boolean {
+    return this._sortNotebooksFirst;
+  }
+
+  set sortNotebooksFirst(value: boolean) {
+    if (this.listing.setNotebooksFirstSorting) {
+      this.listing.setNotebooksFirstSorting(value);
+      this._sortNotebooksFirst = value;
+    } else {
+      console.warn('Listing does not support sorting notebooks first');
+    }
+  }
+
+  /**
+   * Create an iterator over the listing's selected items.
+   *
+   * @returns A new iterator over the listing's selected items.
+   */
+  selectedItems(): IterableIterator<Contents.IModel> {
+    return this.listing.selectedItems();
+  }
+
+  /**
+   * Select an item by name.
+   *
+   * @param name - The name of the item to select.
+   */
+  async selectItemByName(name: string): Promise<void> {
+    await this.listing.selectItemByName(name);
+  }
+
+  clearSelectedItems(): void {
+    this.listing.clearSelectedItems();
+  }
+
+  /**
+   * Rename the first currently selected item.
+   *
+   * @returns A promise that resolves with the new name of the item.
+   */
+  rename(): Promise<string> {
+    return this.listing.rename();
+  }
+
+  /**
+   * Cut the selected items.
+   */
+  cut(): void {
+    this.listing.cut();
+  }
+
+  /**
+   * Copy the selected items.
+   */
+  copy(): void {
+    this.listing.copy();
+  }
+
+  /**
+   * Paste the items from the clipboard.
+   *
+   * @returns A promise that resolves when the operation is complete.
+   */
+  paste(): Promise<void> {
+    return this.listing.paste();
+  }
+
+  private async _createNew(
+    options: Contents.ICreateOptions
+  ): Promise<Contents.IModel> {
+    try {
+      const model = await this._manager.newUntitled(options);
+      await this.listing.selectItemByName(model.name, true);
+      await this.rename();
+      return model;
+    } catch (err) {
+      void showErrorMessage(this._trans.__('Error'), err);
+      throw err;
+    }
+  }
+
+  /**
+   * Create a new directory
+   */
+  async createNewDirectory(): Promise<Contents.IModel> {
+    if (this._directoryPending) {
+      return this._directoryPending;
+    }
+    this._directoryPending = this._createNew({
+      path: this.model.path,
+      type: 'directory'
+    });
+    try {
+      return await this._directoryPending;
+    } finally {
+      this._directoryPending = null;
+    }
+  }
+
+  /**
+   * Create a new file
+   */
+  async createNewFile(
+    options: FileBrowser.IFileOptions
+  ): Promise<Contents.IModel> {
+    if (this._filePending) {
+      return this._filePending;
+    }
+    this._filePending = this._createNew({
+      path: this.model.path,
+      type: 'file',
+      ext: options.ext
+    });
+    try {
+      return await this._filePending;
+    } finally {
+      this._filePending = null;
+    }
+  }
+
+  /**
+   * Delete the currently selected item(s).
+   *
+   * @returns A promise that resolves when the operation is complete.
+   */
+  delete(): Promise<void> {
+    return this.listing.delete();
+  }
+
+  /**
+   * Duplicate the currently selected item(s).
+   *
+   * @returns A promise that resolves when the operation is complete.
+   */
+  duplicate(): Promise<void> {
+    return this.listing.duplicate();
+  }
+
+  /**
+   * Download the currently selected item(s).
+   */
+  download(): Promise<void> {
+    return this.listing.download();
+  }
+
+  /**
+   * cd ..
+   *
+   * Go up one level in the directory tree.
+   */
+  async goUp() {
+    return this.listing.goUp();
+  }
+
+  /**
+   * Shut down kernels on the applicable currently selected items.
+   *
+   * @returns A promise that resolves when the operation is complete.
+   */
+  shutdownKernels(): Promise<void> {
+    return this.listing.shutdownKernels();
+  }
+
+  /**
+   * Select next item.
+   */
+  selectNext(): void {
+    this.listing.selectNext();
+  }
+
+  /**
+   * Select previous item.
+   */
+  selectPrevious(): void {
+    this.listing.selectPrevious();
+  }
+
+  /**
+   * Find a model given a click.
+   *
+   * @param event - The mouse event.
+   *
+   * @returns The model for the selected file.
+   */
+  modelForClick(event: MouseEvent): Contents.IModel | undefined {
+    return this.listing.modelForClick(event);
+  }
+
+  /**
+   * Create the underlying DirListing instance.
+   *
+   * @param options - The DirListing constructor options.
+   *
+   * @returns The created DirListing instance.
+   */
+  protected createDirListing(options: DirListing.IOptions): DirListing {
+    return new DirListing(options);
+  }
+
+  protected translator: ITranslator;
+
+  /**
+   * Handle a connection lost signal from the model.
+   */
+  private _onConnectionFailure(
+    sender: FilterFileBrowserModel,
+    args: Error
+  ): void {
+    if (
+      args instanceof ServerConnection.ResponseError &&
+      args.response.status === 404
+    ) {
+      const title = this._trans.__('Directory not found');
+      args.message = this._trans.__(
+        'Directory not found: "%1"',
+        this.model.path
+      );
+      void showErrorMessage(title, args);
+    }
+  }
+
+  protected listing: DirListing;
+  protected crumbs: BreadCrumbs;
+  protected mainPanel: Panel;
+
   private _manager: IDocumentManager;
-  private _directoryPending: boolean;
+  private _directoryPending: Promise<Contents.IModel> | null = null;
+  private _filePending: Promise<Contents.IModel> | null = null;
   private _navigateToCurrentDirectory: boolean;
+  private _showLastModifiedColumn: boolean = true;
+  private _showFileSizeColumn: boolean = false;
+  private _showHiddenFiles: boolean = false;
+  private _showFileCheckboxes: boolean = false;
+  private _sortNotebooksFirst: boolean = false;
 }
 
 /**
@@ -301,7 +434,7 @@ export namespace FileBrowser {
     /**
      * A file browser model instance.
      */
-    model: FileBrowserModel;
+    model: FilterFileBrowserModel;
 
     /**
      * An optional renderer for the directory listing area.
@@ -309,5 +442,30 @@ export namespace FileBrowser {
      * The default is a shared instance of `DirListing.Renderer`.
      */
     renderer?: DirListing.IRenderer;
+
+    /**
+     * Whether a file browser automatically restores state when instantiated.
+     * The default is `true`.
+     *
+     * #### Notes
+     * The file browser model will need to be restored manually for the file
+     * browser to be able to save its state.
+     */
+    restore?: boolean;
+
+    /**
+     * The application language translator.
+     */
+    translator?: ITranslator;
+  }
+
+  /**
+   * An options object for creating a file.
+   */
+  export interface IFileOptions {
+    /**
+     * The file extension.
+     */
+    ext: string;
   }
 }

@@ -1,43 +1,33 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { IClientSession } from '@jupyterlab/apputils';
-
+import { Prec } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+import { createStandaloneCell, ISharedRawCell } from '@jupyter/ydoc';
+import { ISessionContext } from '@jupyterlab/apputils';
 import {
+  AttachmentsCellModel,
   Cell,
   CellDragUtils,
-  CellModel,
   CodeCell,
   CodeCellModel,
   ICodeCellModel,
-  isCodeCellModel,
   IRawCellModel,
+  isCodeCellModel,
   RawCell,
   RawCellModel
 } from '@jupyterlab/cells';
-
-import { IEditorMimeTypeService, CodeEditor } from '@jupyterlab/codeeditor';
-
-import { nbformat } from '@jupyterlab/coreutils';
-
+import { IEditorMimeTypeService } from '@jupyterlab/codeeditor';
+import * as nbformat from '@jupyterlab/nbformat';
 import { IObservableList, ObservableList } from '@jupyterlab/observables';
-
 import { IRenderMimeRegistry } from '@jupyterlab/rendermime';
-
 import { KernelMessage } from '@jupyterlab/services';
-
-import { each } from '@phosphor/algorithm';
-
-import { MimeData, JSONObject } from '@phosphor/coreutils';
-
-import { Drag } from '@phosphor/dragdrop';
-
-import { Message } from '@phosphor/messaging';
-
-import { ISignal, Signal } from '@phosphor/signaling';
-
-import { Panel, PanelLayout, Widget } from '@phosphor/widgets';
-
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
+import { JSONObject, MimeData } from '@lumino/coreutils';
+import { Drag } from '@lumino/dragdrop';
+import { Message } from '@lumino/messaging';
+import { ISignal, Signal } from '@lumino/signaling';
+import { Panel, PanelLayout, Widget } from '@lumino/widgets';
 import { ConsoleHistory, IConsoleHistory } from './history';
 
 /**
@@ -103,6 +93,7 @@ export class CodeConsole extends Widget {
    */
   constructor(options: CodeConsole.IOptions) {
     super();
+    this._translator = options.translator ?? nullTranslator;
     this.addClass(CONSOLE_CLASS);
     this.node.dataset[KERNEL_USER] = 'true';
     this.node.dataset[CODE_RUNNER] = 'true';
@@ -114,11 +105,10 @@ export class CodeConsole extends Widget {
     this._content = new Panel();
     this._input = new Panel();
 
-    this.contentFactory =
-      options.contentFactory || CodeConsole.defaultContentFactory;
-    this.modelFactory = options.modelFactory || CodeConsole.defaultModelFactory;
+    this.contentFactory = options.contentFactory;
+    this.modelFactory = options.modelFactory ?? CodeConsole.defaultModelFactory;
     this.rendermime = options.rendermime;
-    this.session = options.session;
+    this.sessionContext = options.sessionContext;
     this._mimeTypeService = options.mimeTypeService;
 
     // Add top-level CSS classes.
@@ -130,12 +120,16 @@ export class CodeConsole extends Widget {
     layout.addWidget(this._input);
 
     this._history = new ConsoleHistory({
-      session: this.session
+      sessionContext: this.sessionContext
     });
 
-    this._onKernelChanged();
-    this.session.kernelChanged.connect(this._onKernelChanged, this);
-    this.session.statusChanged.connect(this._onKernelStatusChanged, this);
+    void this._onKernelChanged();
+
+    this.sessionContext.kernelChanged.connect(this._onKernelChanged, this);
+    this.sessionContext.statusChanged.connect(
+      this._onKernelStatusChanged,
+      this
+    );
   }
 
   /**
@@ -170,7 +164,12 @@ export class CodeConsole extends Widget {
   /**
    * The client session used by the console.
    */
-  readonly session: IClientSession;
+  readonly sessionContext: ISessionContext;
+
+  /**
+   * The configuration options for the text editor widget.
+   */
+  editorConfig: Record<string, any> = CodeConsole.defaultEditorConfig;
 
   /**
    * The list of content cells in the console.
@@ -187,7 +186,7 @@ export class CodeConsole extends Widget {
    * The console input prompt cell.
    */
   get promptCell(): CodeCell | null {
-    let inputLayout = this._input.layout as PanelLayout;
+    const inputLayout = this._input.layout as PanelLayout;
     return (inputLayout.widgets[0] as CodeCell) || null;
   }
 
@@ -204,7 +203,7 @@ export class CodeConsole extends Widget {
    * rendered code cell widgets and does not execute them (though it can store
    * the execution message id).
    */
-  addCell(cell: CodeCell, msgId?: string) {
+  addCell(cell: CodeCell, msgId?: string): void {
     cell.addClass(CONSOLE_CELL_CLASS);
     this._content.addWidget(cell);
     this._cells.push(cell);
@@ -219,19 +218,41 @@ export class CodeConsole extends Widget {
   /**
    * Add a banner cell.
    */
-  addBanner() {
+  addBanner(): void {
     if (this._banner) {
       // An old banner just becomes a normal cell now.
-      let cell = this._banner;
+      const cell = this._banner;
       this._cells.push(this._banner);
       cell.disposed.connect(this._onCellDisposed, this);
     }
     // Create the banner.
-    let model = this.modelFactory.createRawCell({});
-    model.value.text = '...';
-    let banner = (this._banner = new RawCell({
+    const model = this.modelFactory.createRawCell({
+      sharedModel: createStandaloneCell({
+        cell_type: 'raw',
+        source: '...'
+      }) as ISharedRawCell
+    });
+    const banner = (this._banner = new RawCell({
       model,
-      contentFactory: this.contentFactory
+      contentFactory: this.contentFactory,
+      placeholder: false,
+      editorConfig: {
+        autoClosingBrackets: false,
+        codeFolding: false,
+        highlightActiveLine: false,
+        highlightTrailingWhitespace: false,
+        highlightWhitespace: false,
+        indentUnit: '4',
+        lineNumbers: false,
+        lineWrap: true,
+        matchBrackets: false,
+        readOnly: true,
+        rulers: [],
+        scrollPastEnd: false,
+        smartIndent: false,
+        tabSize: 4,
+        theme: 'jupyter'
+      }
     })).initializeState();
     banner.addClass(BANNER_CLASS);
     banner.readOnly = true;
@@ -243,7 +264,7 @@ export class CodeConsole extends Widget {
    */
   clear(): void {
     // Dispose all the content cells
-    let cells = this._cells;
+    const cells = this._cells;
     while (cells.length > 0) {
       cells.get(0).dispose();
     }
@@ -253,9 +274,9 @@ export class CodeConsole extends Widget {
    * Create a new cell with the built-in factory.
    */
   createCodeCell(): CodeCell {
-    let factory = this.contentFactory;
-    let options = this._createCodeCellOptions();
-    let cell = factory.createCodeCell(options);
+    const factory = this.contentFactory;
+    const options = this._createCodeCellOptions();
+    const cell = factory.createCodeCell(options);
     cell.readOnly = true;
     cell.model.mimeType = this._mimetype;
     return cell;
@@ -264,16 +285,14 @@ export class CodeConsole extends Widget {
   /**
    * Dispose of the resources held by the widget.
    */
-  dispose() {
+  dispose(): void {
     // Do nothing if already disposed.
     if (this.isDisposed) {
       return;
     }
-    this._cells.clear();
-    this._msgIdCells = null;
-    this._msgIds = null;
+    this._msgIdCells = null!;
+    this._msgIds = null!;
     this._history.dispose();
-
     super.dispose();
   }
 
@@ -287,38 +306,38 @@ export class CodeConsole extends Widget {
    * should wait for the API to determine whether code being submitted is
    * incomplete before attempting submission anyway. The default value is `250`.
    */
-  execute(force = false, timeout = EXECUTION_TIMEOUT): Promise<void> {
-    if (this.session.status === 'dead') {
-      return Promise.resolve(void 0);
+  async execute(force = false, timeout = EXECUTION_TIMEOUT): Promise<void> {
+    if (this.sessionContext.session?.kernel?.status === 'dead') {
+      return;
     }
 
     const promptCell = this.promptCell;
     if (!promptCell) {
-      return Promise.reject('Cannot execute without a prompt cell');
+      throw new Error('Cannot execute without a prompt cell');
     }
     promptCell.model.trusted = true;
 
     if (force) {
       // Create a new prompt cell before kernel execution to allow typeahead.
       this.newPromptCell();
-      return this._execute(promptCell);
+      await this._execute(promptCell);
+      return;
     }
 
     // Check whether we should execute.
-    return this._shouldExecute(timeout).then(should => {
-      if (this.isDisposed) {
-        return;
-      }
-      if (should) {
-        // Create a new prompt cell before kernel execution to allow typeahead.
-        this.newPromptCell();
-        this.promptCell!.editor.focus();
-        return this._execute(promptCell);
-      } else {
-        // add a newline if we shouldn't execute
-        promptCell.editor.newIndentedLine();
-      }
-    });
+    const shouldExecute = await this._shouldExecute(timeout);
+    if (this.isDisposed) {
+      return;
+    }
+    if (shouldExecute) {
+      // Create a new prompt cell before kernel execution to allow typeahead.
+      this.newPromptCell();
+      this.promptCell!.editor!.focus();
+      await this._execute(promptCell);
+    } else {
+      // add a newline if we shouldn't execute
+      promptCell.editor!.newIndentedLine();
+    }
   }
 
   /**
@@ -338,10 +357,10 @@ export class CodeConsole extends Widget {
    * @returns A promise that indicates when the injected cell's execution ends.
    */
   inject(code: string, metadata: JSONObject = {}): Promise<void> {
-    let cell = this.createCodeCell();
-    cell.model.value.text = code;
-    for (let key of Object.keys(metadata)) {
-      cell.model.metadata.set(key, metadata[key]);
+    const cell = this.createCodeCell();
+    cell.model.sharedModel.setSource(code);
+    for (const key of Object.keys(metadata)) {
+      cell.model.setMetadata(key, metadata[key]);
     }
     this.addCell(cell);
     return this._execute(cell);
@@ -351,11 +370,24 @@ export class CodeConsole extends Widget {
    * Insert a line break in the prompt cell.
    */
   insertLinebreak(): void {
-    let promptCell = this.promptCell;
+    const promptCell = this.promptCell;
     if (!promptCell) {
       return;
     }
-    promptCell.editor.newIndentedLine();
+    promptCell.editor!.newIndentedLine();
+  }
+
+  /**
+   * Replaces the selected text in the prompt cell.
+   *
+   * @param text - The text to replace the selection.
+   */
+  replaceSelection(text: string): void {
+    const promptCell = this.promptCell;
+    if (!promptCell) {
+      return;
+    }
+    promptCell.editor!.replaceSelection?.(text);
   }
 
   /**
@@ -367,12 +399,12 @@ export class CodeConsole extends Widget {
    */
   serialize(): nbformat.ICodeCell[] {
     const cells: nbformat.ICodeCell[] = [];
-    each(this._cells, cell => {
-      let model = cell.model;
+    for (const cell of this._cells) {
+      const model = cell.model;
       if (isCodeCellModel(model)) {
         cells.push(model.toJSON());
       }
-    });
+    }
 
     if (this.promptCell) {
       cells.push(this.promptCell.model.toJSON());
@@ -396,7 +428,7 @@ export class CodeConsole extends Widget {
     }
 
     let target = event.target as HTMLElement;
-    let cellFilter = (node: HTMLElement) =>
+    const cellFilter = (node: HTMLElement) =>
       node.classList.contains(CONSOLE_CELL_CLASS);
     let cellIndex = CellDragUtils.findCell(target, this._cells, cellFilter);
 
@@ -418,10 +450,8 @@ export class CodeConsole extends Widget {
 
     const cell = this._cells.get(cellIndex);
 
-    let targetArea: CellDragUtils.ICellTargetArea = CellDragUtils.detectTargetArea(
-      cell,
-      event.target as HTMLElement
-    );
+    const targetArea: CellDragUtils.ICellTargetArea =
+      CellDragUtils.detectTargetArea(cell, event.target as HTMLElement);
 
     if (targetArea === 'prompt') {
       this._dragData = {
@@ -444,6 +474,7 @@ export class CodeConsole extends Widget {
   private _evtMouseMove(event: MouseEvent) {
     const data = this._dragData;
     if (
+      data &&
       CellDragUtils.shouldStartDrag(
         data.pressX,
         data.pressY,
@@ -463,11 +494,11 @@ export class CodeConsole extends Widget {
     clientX: number,
     clientY: number
   ): Promise<void> {
-    const cellModel = this._focusedCell.model as ICodeCellModel;
-    let selected: nbformat.ICell[] = [cellModel.toJSON()];
+    const cellModel = this._focusedCell!.model as ICodeCellModel;
+    const selected: nbformat.ICell[] = [cellModel.toJSON()];
 
     const dragImage = CellDragUtils.createCellDragImage(
-      this._focusedCell,
+      this._focusedCell!,
       selected
     );
 
@@ -480,7 +511,7 @@ export class CodeConsole extends Widget {
     });
 
     this._drag.mimeData.setData(JUPYTER_CELL_MIME, selected);
-    const textContent = cellModel.value.text;
+    const textContent = cellModel.sharedModel.getSource();
     this._drag.mimeData.setData('text/plain', textContent);
 
     this._focusedCell = null;
@@ -529,7 +560,7 @@ export class CodeConsole extends Widget {
    * Handle `after_attach` messages for the widget.
    */
   protected onAfterAttach(msg: Message): void {
-    let node = this.node;
+    const node = this.node;
     node.addEventListener('keydown', this, true);
     node.addEventListener('click', this);
     node.addEventListener('mousedown', this);
@@ -537,7 +568,7 @@ export class CodeConsole extends Widget {
     if (!this.promptCell) {
       this.newPromptCell();
     } else {
-      this.promptCell.editor.focus();
+      this.promptCell.editor!.focus();
       this.update();
     }
   }
@@ -546,7 +577,7 @@ export class CodeConsole extends Widget {
    * Handle `before-detach` messages for the widget.
    */
   protected onBeforeDetach(msg: Message): void {
-    let node = this.node;
+    const node = this.node;
     node.removeEventListener('keydown', this, true);
     node.removeEventListener('click', this);
   }
@@ -555,7 +586,7 @@ export class CodeConsole extends Widget {
    * Handle `'activate-request'` messages.
    */
   protected onActivateRequest(msg: Message): void {
-    let editor = this.promptCell && this.promptCell.editor;
+    const editor = this.promptCell && this.promptCell.editor;
     if (editor) {
       editor.focus();
     }
@@ -567,31 +598,31 @@ export class CodeConsole extends Widget {
    */
   protected newPromptCell(): void {
     let promptCell = this.promptCell;
-    let input = this._input;
+    const input = this._input;
 
     // Make the last prompt read-only, clear its signals, and move to content.
     if (promptCell) {
       promptCell.readOnly = true;
       promptCell.removeClass(PROMPT_CLASS);
       Signal.clearData(promptCell.editor);
-      let child = input.widgets[0];
+      // Ensure to clear the cursor
+      promptCell.editor?.blur();
+      const child = input.widgets[0];
       child.parent = null;
       this.addCell(promptCell);
     }
 
     // Create the new prompt cell.
-    let factory = this.contentFactory;
-    let options = this._createCodeCellOptions();
+    const factory = this.contentFactory;
+    const options = this._createCodeCellOptions();
     promptCell = factory.createCodeCell(options);
     promptCell.model.mimeType = this._mimetype;
     promptCell.addClass(PROMPT_CLASS);
+
+    // Add the prompt cell to the DOM, making `this.promptCell` valid again.
     this._input.addWidget(promptCell);
 
-    // Suppress the default "Enter" key handling.
-    let editor = promptCell.editor;
-    editor.addKeydownHandler(this._onEditorKeydown);
-
-    this._history.editor = editor;
+    this._history.editor = promptCell.editor;
     this._promptCellCreated.emit(promptCell);
   }
 
@@ -606,13 +637,18 @@ export class CodeConsole extends Widget {
    * Handle the `'keydown'` event for the widget.
    */
   private _evtKeyDown(event: KeyboardEvent): void {
-    let editor = this.promptCell && this.promptCell.editor;
+    const editor = this.promptCell && this.promptCell.editor;
     if (!editor) {
       return;
     }
     if (event.keyCode === 13 && !editor.hasFocus()) {
       event.preventDefault();
       editor.focus();
+    } else if (event.keyCode === 27 && editor.hasFocus()) {
+      // Set to command mode
+      event.preventDefault();
+      event.stopPropagation();
+      this.node.focus();
     }
   }
 
@@ -624,7 +660,7 @@ export class CodeConsole extends Widget {
       this.promptCell &&
       this.promptCell.node.contains(event.target as HTMLElement)
     ) {
-      this.promptCell.editor.focus();
+      this.promptCell.editor!.focus();
     }
   }
 
@@ -632,7 +668,7 @@ export class CodeConsole extends Widget {
    * Execute the code in the current prompt cell.
    */
   private _execute(cell: CodeCell): Promise<void> {
-    let source = cell.model.value.text;
+    const source = cell.model.sharedModel.getSource();
     this._history.push(source);
     // If the source of the console is just "clear", clear the console as we
     // do in IPython or QtConsole.
@@ -641,42 +677,45 @@ export class CodeConsole extends Widget {
       return Promise.resolve(void 0);
     }
     cell.model.contentChanged.connect(this.update, this);
-    let onSuccess = (value: KernelMessage.IExecuteReplyMsg) => {
+    const onSuccess = (value: KernelMessage.IExecuteReplyMsg) => {
       if (this.isDisposed) {
         return;
       }
       if (value && value.content.status === 'ok') {
-        let content = value.content;
+        const content = value.content;
         // Use deprecated payloads for backwards compatibility.
         if (content.payload && content.payload.length) {
-          let setNextInput = content.payload.filter(i => {
+          const setNextInput = content.payload.filter(i => {
             return (i as any).source === 'set_next_input';
           })[0];
           if (setNextInput) {
-            let text = (setNextInput as any).text;
+            const text = (setNextInput as any).text;
             // Ignore the `replace` value and always set the next cell.
-            cell.model.value.text = text;
+            cell.model.sharedModel.setSource(text);
           }
         }
       } else if (value && value.content.status === 'error') {
-        each(this._cells, (cell: CodeCell) => {
-          if (cell.model.executionCount === null) {
+        for (const cell of this._cells) {
+          if ((cell.model as ICodeCellModel).executionCount === null) {
             cell.setPrompt('');
           }
-        });
+        }
       }
       cell.model.contentChanged.disconnect(this.update, this);
       this.update();
       this._executed.emit(new Date());
     };
-    let onFailure = () => {
+    const onFailure = () => {
       if (this.isDisposed) {
         return;
       }
       cell.model.contentChanged.disconnect(this.update, this);
       this.update();
     };
-    return CodeCell.execute(cell, this.session).then(onSuccess, onFailure);
+    return CodeCell.execute(cell, this.sessionContext).then(
+      onSuccess,
+      onFailure
+    );
   }
 
   /**
@@ -684,11 +723,13 @@ export class CodeConsole extends Widget {
    */
   private _handleInfo(info: KernelMessage.IInfoReplyMsg['content']): void {
     if (info.status !== 'ok') {
-      this._banner.model.value.text = 'Error in getting kernel banner';
+      this._banner!.model.sharedModel.setSource(
+        'Error in getting kernel banner'
+      );
       return;
     }
-    this._banner.model.value.text = info.banner;
-    let lang = info.language_info as nbformat.ILanguageInfoMetadata;
+    this._banner!.model.sharedModel.setSource(info.banner);
+    const lang = info.language_info as nbformat.ILanguageInfoMetadata;
     this._mimetype = this._mimeTypeService.getMimeTypeByLanguage(lang);
     if (this.promptCell) {
       this.promptCell.model.mimeType = this._mimetype;
@@ -699,11 +740,32 @@ export class CodeConsole extends Widget {
    * Create the options used to initialize a code cell widget.
    */
   private _createCodeCellOptions(): CodeCell.IOptions {
-    let contentFactory = this.contentFactory;
-    let modelFactory = this.modelFactory;
-    let model = modelFactory.createCodeCell({});
-    let rendermime = this.rendermime;
-    return { model, rendermime, contentFactory };
+    const contentFactory = this.contentFactory;
+    const modelFactory = this.modelFactory;
+    const model = modelFactory.createCodeCell({});
+    const rendermime = this.rendermime;
+    const editorConfig = this.editorConfig;
+
+    // Suppress the default "Enter" key handling.
+    const onKeyDown = EditorView.domEventHandlers({
+      keydown: (event: KeyboardEvent, view: EditorView) => {
+        if (event.keyCode === 13) {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      }
+    });
+
+    return {
+      model,
+      rendermime,
+      contentFactory,
+      editorConfig,
+      editorExtensions: [Prec.high(onKeyDown)],
+      placeholder: false,
+      translator: this._translator
+    };
   }
 
   /**
@@ -728,13 +790,13 @@ export class CodeConsole extends Widget {
     if (!promptCell) {
       return Promise.resolve(false);
     }
-    let model = promptCell.model;
-    let code = model.value.text;
+    const model = promptCell.model;
+    const code = model.sharedModel.getSource();
     return new Promise<boolean>((resolve, reject) => {
-      let timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         resolve(true);
       }, timeout);
-      let kernel = this.session.kernel;
+      const kernel = this.sessionContext.session?.kernel;
       if (!kernel) {
         resolve(false);
         return;
@@ -759,52 +821,32 @@ export class CodeConsole extends Widget {
   }
 
   /**
-   * Handle a keydown event on an editor.
-   */
-  private _onEditorKeydown(editor: CodeEditor.IEditor, event: KeyboardEvent) {
-    // Suppress "Enter" events.
-    return event.keyCode === 13;
-  }
-
-  /**
    * Handle a change to the kernel.
    */
-  private _onKernelChanged(): void {
+  private async _onKernelChanged(): Promise<void> {
     this.clear();
     if (this._banner) {
       this._banner.dispose();
       this._banner = null;
     }
     this.addBanner();
+    if (this.sessionContext.session?.kernel) {
+      this._handleInfo(await this.sessionContext.session.kernel.info);
+    }
   }
 
   /**
    * Handle a change to the kernel status.
    */
-  private _onKernelStatusChanged(): void {
-    if (this.session.status === 'connected') {
-      // we just had a kernel restart or reconnect - reset banner
-      let kernel = this.session.kernel;
-      if (!kernel) {
-        return;
-      }
-      kernel.ready
-        .then(() => {
-          if (this.isDisposed || !kernel || !kernel.info) {
-            return;
-          }
-          this._handleInfo(this.session.kernel.info);
-        })
-        .catch(err => {
-          console.error('could not get kernel info');
-        });
-    } else if (this.session.status === 'restarting') {
+  private async _onKernelStatusChanged(): Promise<void> {
+    const kernel = this.sessionContext.session?.kernel;
+    if (kernel?.status === 'restarting') {
       this.addBanner();
-      this._handleInfo(this.session.kernel.info);
+      this._handleInfo(await kernel?.info);
     }
   }
 
-  private _banner: RawCell = null;
+  private _banner: RawCell | null = null;
   private _cells: IObservableList<Cell>;
   private _content: Panel;
   private _executed = new Signal<this, Date>(this);
@@ -815,9 +857,14 @@ export class CodeConsole extends Widget {
   private _msgIds = new Map<string, CodeCell>();
   private _msgIdCells = new Map<CodeCell, string>();
   private _promptCellCreated = new Signal<this, CodeCell>(this);
-  private _dragData: { pressX: number; pressY: number; index: number } = null;
-  private _drag: Drag = null;
-  private _focusedCell: Cell = null;
+  private _dragData: {
+    pressX: number;
+    pressY: number;
+    index: number;
+  } | null = null;
+  private _drag: Drag | null = null;
+  private _focusedCell: Cell | null = null;
+  private _translator: ITranslator;
 }
 
 /**
@@ -846,13 +893,26 @@ export namespace CodeConsole {
     /**
      * The client session for the console widget.
      */
-    session: IClientSession;
+    sessionContext: ISessionContext;
 
     /**
      * The service used to look up mime types.
      */
     mimeTypeService: IEditorMimeTypeService;
+
+    /**
+     * The application language translator.
+     */
+    translator?: ITranslator;
   }
+
+  /**
+   * Default console editor configuration
+   */
+  export const defaultEditorConfig: Record<string, any> = {
+    codeFolding: false,
+    lineNumbers: false
+  };
 
   /**
    * A content factory for console children.
@@ -872,8 +932,10 @@ export namespace CodeConsole {
   /**
    * Default implementation of `IContentFactory`.
    */
-  export class ContentFactory extends Cell.ContentFactory
-    implements IContentFactory {
+  export class ContentFactory
+    extends Cell.ContentFactory
+    implements IContentFactory
+  {
     /**
      * Create a new code cell widget.
      *
@@ -882,9 +944,6 @@ export namespace CodeConsole {
      * notebook content factory is used.
      */
     createCodeCell(options: CodeCell.IOptions): CodeCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new CodeCell(options).initializeState();
     }
 
@@ -896,9 +955,6 @@ export namespace CodeConsole {
      * notebook content factory is used.
      */
     createRawCell(options: RawCell.IOptions): RawCell {
-      if (!options.contentFactory) {
-        options.contentFactory = this;
-      }
       return new RawCell(options).initializeState();
     }
   }
@@ -912,11 +968,6 @@ export namespace CodeConsole {
      */
     export interface IOptions extends Cell.IContentFactory {}
   }
-
-  /**
-   * A default content factory for the code console.
-   */
-  export const defaultContentFactory: IContentFactory = new ContentFactory();
 
   /**
    * A model factory for a console widget.
@@ -945,7 +996,9 @@ export namespace CodeConsole {
      * @returns A new raw cell. If a source cell is provided, the
      *   new cell will be initialized with the data from the source.
      */
-    createRawCell(options: CellModel.IOptions): IRawCellModel;
+    createRawCell(
+      options: AttachmentsCellModel.IOptions<ISharedRawCell>
+    ): IRawCellModel;
   }
 
   /**
@@ -967,15 +1020,13 @@ export namespace CodeConsole {
 
     /**
      * Create a new code cell.
-     *
-     * @param source - The data to use for the original source data.
-     *
+     * @param options - The data to use for the original source data.
      * @returns A new code cell. If a source cell is provided, the
-     *   new cell will be initialized with the data from the source.
-     *   If the contentFactory is not provided, the instance
-     *   `codeCellContentFactory` will be used.
+    new cell will be initialized with the data from the source.
+    If the contentFactory is not provided, the instance
+    `codeCellContentFactory` will be used.
      */
-    createCodeCell(options: CodeCellModel.IOptions): ICodeCellModel {
+    createCodeCell(options: CodeCellModel.IOptions = {}): ICodeCellModel {
       if (!options.contentFactory) {
         options.contentFactory = this.codeCellContentFactory;
       }
@@ -984,13 +1035,13 @@ export namespace CodeConsole {
 
     /**
      * Create a new raw cell.
-     *
-     * @param source - The data to use for the original source data.
-     *
+     * @param options - The data to use for the original source data.
      * @returns A new raw cell. If a source cell is provided, the
-     *   new cell will be initialized with the data from the source.
+    new cell will be initialized with the data from the source.
      */
-    createRawCell(options: CellModel.IOptions): IRawCellModel {
+    createRawCell(
+      options: AttachmentsCellModel.IOptions<ISharedRawCell>
+    ): IRawCellModel {
       return new RawCellModel(options);
     }
   }

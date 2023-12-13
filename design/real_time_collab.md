@@ -1,7 +1,7 @@
-# Read Time Collaboration Design
+# Real Time Collaboration Design
 
 This purpose of this document is to describe the design of the real-time collaboration (RTC)
-features we are building for JuptyerLab. The focus here is primarily on the user experience
+features we are building for JupyterLab. The focus here is primarily on the user experience
 and usage cases, rather than on the implementation details.
 
 ## Personas
@@ -22,7 +22,7 @@ Jon and his collaborators need the ability to do ad-hoc collaboration on particu
 are already version controlling their code, documentation and notebooks, but at times, Git/GitHub
 don't provide fast enough collaborative interactions. They want to continue to work on their local
 systems, with their own local notebook servers, but need to be able to initiate the RTC of
-one or more files or a diretory of files with a group of individuals.
+one or more files or a directory of files with a group of individuals.
 
 During the RTC sessions, the participants are focused on the following aspects of their
 work:
@@ -33,9 +33,9 @@ work:
 
 All individuals in the collaboration already have access to the files (Git/GitHub).
 Because of this, during the RTC they need to be able to collaborative edit the same exact
-version, which will later be commmited to the repository. Because of this, only one participant
+version, which will later be committed to the repository. Because of this, only one participant
 would have a live filesystem representation of the edited file. At the end of the ad-hoc RTC session,
-the inviduals would go back to syncing their changes through GitHub.
+the individuals would go back to syncing their changes through GitHub.
 
 ## The MTTU Scientific Collaboration
 
@@ -45,11 +45,11 @@ ten year observing cycle. Once operational, they will collect petabytes of data 
 accessed by thousands of scientific users.
 
 The collaboration has a software stack based on Python and C++ and is embracing modern,
-software engieering practices (version control with Git/GitHub, Travis, Slack, etc.). They version
+software engineering practices (version control with Git/GitHub, Travis, Slack, etc.). They version
 control everything and run an extensive test suite on each commit. The collaboration is exploring the possibility of using JupyterHub to provide a unified user-experience for their users to access data
 and their analysis software.
 
-The collaboration would run JupyterLab with JuptyerHub, and build custom JupyterLab extensions that
+The collaboration would run JupyterLab with JupyterHub, and build custom JupyterLab extensions that
 have custom front-end UIs that talk to their various backend services. They want to provide RTC
 capabilities for all of their services to enable the users and scientists to work with notebooks,
 text files and their custom backend services in a collaborative manner. Most of their RTC session will

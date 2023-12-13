@@ -3,20 +3,29 @@
 
 import { IWidgetTracker } from '@jupyterlab/apputils';
 import { Cell } from '@jupyterlab/cells';
-import { Token } from '@phosphor/coreutils';
-import { ISignal } from '@phosphor/signaling';
-import { Widget } from '@phosphor/widgets';
-import { NotebookPanel } from './panel';
+import { Token } from '@lumino/coreutils';
+import { ISignal } from '@lumino/signaling';
+import { Widget } from '@lumino/widgets';
 import { NotebookTools } from './notebooktools';
+import { NotebookPanel } from './panel';
+import { NotebookWidgetFactory } from './widgetfactory';
 
-/* tslint:disable */
+/**
+ * The notebook widget factory token.
+ */
+export const INotebookWidgetFactory = new Token<NotebookWidgetFactory.IFactory>(
+  '@jupyterlab/notebook:INotebookWidgetFactory',
+  'A service to create the notebook viewer.'
+);
+
 /**
  * The notebook tools token.
  */
 export const INotebookTools = new Token<INotebookTools>(
-  '@jupyterlab/notebook:INotebookTools'
+  '@jupyterlab/notebook:INotebookTools',
+  `A service for the "Notebook Tools" panel in the
+  right sidebar. Use this to add your own functionality to the panel.`
 );
-/* tslint:enable */
 
 /**
  * The interface for notebook metadata tools.
@@ -26,6 +35,7 @@ export interface INotebookTools extends Widget {
   activeCell: Cell | null;
   selectedCells: Cell[];
   addItem(options: NotebookTools.IAddOptions): void;
+  addSection(options: NotebookTools.IAddSectionOptions): void;
 }
 
 /**
@@ -44,10 +54,35 @@ export namespace INotebookTools {
     /**
      * The section to which the tool should be added.
      */
-    section?: 'common' | 'advanced';
+    section: 'advanced' | string;
 
     /**
      * The rank order of the widget among its siblings.
+     */
+    rank?: number;
+  }
+
+  /**
+   * The options used to add a section to the notebook tools.
+   */
+  export interface IAddSectionOptions {
+    /**
+     * The name of the new section.
+     */
+    sectionName: string;
+
+    /**
+     * The tool to add to the notebook tools area.
+     */
+    tool?: INotebookTools.ITool;
+
+    /**
+     * The label of the new section.
+     */
+    label?: string;
+
+    /**
+     * The rank order of the section among its siblings.
      */
     rank?: number;
   }
@@ -60,14 +95,15 @@ export namespace INotebookTools {
   }
 }
 
-/* tslint:disable */
 /**
  * The notebook tracker token.
  */
 export const INotebookTracker = new Token<INotebookTracker>(
-  '@jupyterlab/notebook:INotebookTracker'
+  '@jupyterlab/notebook:INotebookTracker',
+  `A widget tracker for notebooks.
+  Use this if you want to be able to iterate over and interact with notebooks
+  created by the application.`
 );
-/* tslint:enable */
 
 /**
  * An object that tracks notebook widgets.
@@ -79,7 +115,7 @@ export interface INotebookTracker extends IWidgetTracker<NotebookPanel> {
    * #### Notes
    * If there is no cell with the focus, then this value is `null`.
    */
-  readonly activeCell: Cell;
+  readonly activeCell: Cell | null;
 
   /**
    * A signal emitted when the current active cell changes.
@@ -87,7 +123,7 @@ export interface INotebookTracker extends IWidgetTracker<NotebookPanel> {
    * #### Notes
    * If there is no cell with the focus, then `null` will be emitted.
    */
-  readonly activeCellChanged: ISignal<this, Cell>;
+  readonly activeCellChanged: ISignal<this, Cell | null>;
 
   /**
    * A signal emitted when the selection state changes.

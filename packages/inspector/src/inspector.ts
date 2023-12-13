@@ -2,9 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { Printing } from '@jupyterlab/apputils';
-
-import { Panel, PanelLayout, Widget } from '@phosphor/widgets';
-
+import {
+  ITranslator,
+  nullTranslator,
+  TranslationBundle
+} from '@jupyterlab/translation';
+import { Panel, PanelLayout, Widget } from '@lumino/widgets';
 import { IInspector } from './tokens';
 
 /**
@@ -25,13 +28,17 @@ const DEFAULT_CONTENT_CLASS = 'jp-Inspector-default-content';
 /**
  * A panel which contains a set of inspectors.
  */
-export class InspectorPanel extends Panel
-  implements IInspector, Printing.IPrintable {
+export class InspectorPanel
+  extends Panel
+  implements IInspector, Printing.IPrintable
+{
   /**
    * Construct an inspector.
    */
   constructor(options: InspectorPanel.IOptions = {}) {
     super();
+    this.translator = options.translator || nullTranslator;
+    this._trans = this.translator.load('jupyterlab');
 
     if (options.initialContent instanceof Widget) {
       this._content = options.initialContent;
@@ -41,7 +48,9 @@ export class InspectorPanel extends Panel
       );
     } else {
       this._content = InspectorPanel._generateContentWidget(
-        '<p>Click on a function to see documentation.</p>'
+        '<p>' +
+          this._trans.__('Click on a function to see documentation.') +
+          '</p>'
       );
     }
 
@@ -53,7 +62,7 @@ export class InspectorPanel extends Panel
    * Print in iframe
    */
   [Printing.symbol]() {
-    return () => Printing.printWidget(this);
+    return (): Promise<void> => Printing.printWidget(this);
   }
 
   /**
@@ -140,12 +149,19 @@ export class InspectorPanel extends Panel
     return widget;
   }
 
-  private _content: Widget = null;
+  protected translator: ITranslator;
+  private _trans: TranslationBundle;
+  private _content: Widget;
   private _source: IInspector.IInspectable | null = null;
 }
 
 export namespace InspectorPanel {
   export interface IOptions {
     initialContent?: Widget | string | undefined;
+
+    /**
+     * The application language translator.
+     */
+    translator?: ITranslator;
   }
 }

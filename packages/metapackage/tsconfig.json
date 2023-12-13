@@ -22,7 +22,16 @@
       "path": "../attachments"
     },
     {
+      "path": "../cell-toolbar"
+    },
+    {
+      "path": "../cell-toolbar-extension"
+    },
+    {
       "path": "../cells"
+    },
+    {
+      "path": "../celltags-extension"
     },
     {
       "path": "../codeeditor"
@@ -53,6 +62,12 @@
     },
     {
       "path": "../csvviewer-extension"
+    },
+    {
+      "path": "../debugger"
+    },
+    {
+      "path": "../debugger-extension"
     },
     {
       "path": "../docmanager"
@@ -124,6 +139,18 @@
       "path": "../launcher-extension"
     },
     {
+      "path": "../logconsole"
+    },
+    {
+      "path": "../logconsole-extension"
+    },
+    {
+      "path": "../lsp"
+    },
+    {
+      "path": "../lsp-extension"
+    },
+    {
       "path": "../mainmenu"
     },
     {
@@ -136,10 +163,25 @@
       "path": "../markdownviewer-extension"
     },
     {
-      "path": "../mathjax2"
+      "path": "../markedparser-extension"
     },
     {
-      "path": "../mathjax2-extension"
+      "path": "../mathjax-extension"
+    },
+    {
+      "path": "../mermaid"
+    },
+    {
+      "path": "../mermaid-extension"
+    },
+    {
+      "path": "../metadataform"
+    },
+    {
+      "path": "../metadataform-extension"
+    },
+    {
+      "path": "../nbformat"
     },
     {
       "path": "../notebook"
@@ -155,6 +197,15 @@
     },
     {
       "path": "../pdf-extension"
+    },
+    {
+      "path": "../pluginmanager"
+    },
+    {
+      "path": "../pluginmanager-extension"
+    },
+    {
+      "path": "../property-inspector"
     },
     {
       "path": "../rendermime"
@@ -181,16 +232,19 @@
       "path": "../settingeditor-extension"
     },
     {
+      "path": "../settingregistry"
+    },
+    {
       "path": "../shortcuts-extension"
+    },
+    {
+      "path": "../statedb"
     },
     {
       "path": "../statusbar"
     },
     {
       "path": "../statusbar-extension"
-    },
-    {
-      "path": "../tabmanager-extension"
     },
     {
       "path": "../terminal"
@@ -205,22 +259,28 @@
       "path": "../theme-light-extension"
     },
     {
+      "path": "../toc"
+    },
+    {
+      "path": "../toc-extension"
+    },
+    {
       "path": "../tooltip"
     },
     {
       "path": "../tooltip-extension"
     },
     {
+      "path": "../translation"
+    },
+    {
+      "path": "../translation-extension"
+    },
+    {
       "path": "../ui-components"
     },
     {
-      "path": "../vdom"
-    },
-    {
-      "path": "../vdom-extension"
-    },
-    {
-      "path": "../vega4-extension"
+      "path": "../ui-components-extension"
     },
     {
       "path": "../vega5-extension"

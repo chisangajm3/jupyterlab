@@ -1,12 +1,13 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { Widget } from '@phosphor/widgets';
-
+import { Message } from '@lumino/messaging';
+import { Widget } from '@lumino/widgets';
 import { Dialog, showDialog } from './dialog';
-import { Styling } from './styling';
 
 const INPUT_DIALOG_CLASS = 'jp-Input-Dialog';
+
+const INPUT_BOOLEAN_DIALOG_CLASS = 'jp-Input-Boolean-Dialog';
 
 /**
  * Namespace for input dialogs
@@ -17,7 +18,7 @@ export namespace InputDialog {
    */
   export interface IOptions {
     /**
-     * The top level text for the dialog.  Defaults to an empty string.
+     * The top level text for the dialog. Defaults to an empty string.
      */
     title: Dialog.Header;
 
@@ -32,7 +33,7 @@ export namespace InputDialog {
     label?: string;
 
     /**
-     * An optional renderer for dialog items.  Defaults to a shared
+     * An optional renderer for dialog items. Defaults to a shared
      * default renderer.
      */
     renderer?: Dialog.IRenderer;
@@ -46,6 +47,11 @@ export namespace InputDialog {
      * Label for cancel button.
      */
     cancelLabel?: string;
+
+    /**
+     * The checkbox to display in the footer. Defaults no checkbox.
+     */
+    checkbox?: Partial<Dialog.ICheckbox> | null;
   }
 
   /**
@@ -157,6 +163,40 @@ export namespace InputDialog {
   }
 
   /**
+   * Constructor options for item selection input dialogs
+   */
+  export interface IMultipleItemsOptions extends IOptions {
+    /**
+     * List of choices
+     */
+    items: Array<string>;
+    /**
+     * Default choices
+     */
+    defaults?: string[];
+  }
+
+  /**
+   * Create and show a input dialog for a choice.
+   *
+   * @param options - The dialog setup options.
+   *
+   * @returns A promise that resolves with whether the dialog was accepted
+   */
+  export function getMultipleItems(
+    options: IMultipleItemsOptions
+  ): Promise<Dialog.IResult<string[]>> {
+    return showDialog({
+      ...options,
+      body: new InputMultipleItemsDialog(options),
+      buttons: [
+        Dialog.cancelButton({ label: options.cancelLabel }),
+        Dialog.okButton({ label: options.okLabel })
+      ]
+    });
+  }
+
+  /**
    * Constructor options for text input dialogs
    */
   export interface ITextOptions extends IOptions {
@@ -168,6 +208,13 @@ export namespace InputDialog {
      * Placeholder text
      */
     placeholder?: string;
+    /**
+     * Selection range
+     *
+     * Number of characters to pre-select when dialog opens.
+     * Default is to select the whole input text if present.
+     */
+    selectionRange?: number;
   }
 
   /**
@@ -190,6 +237,27 @@ export namespace InputDialog {
       focusNodeSelector: 'input'
     });
   }
+
+  /**
+   * Create and show a input dialog for a password.
+   *
+   * @param options - The dialog setup options.
+   *
+   * @returns A promise that resolves with whether the dialog was accepted
+   */
+  export function getPassword(
+    options: Omit<ITextOptions, 'selectionRange'>
+  ): Promise<Dialog.IResult<string>> {
+    return showDialog({
+      ...options,
+      body: new InputPasswordDialog(options),
+      buttons: [
+        Dialog.cancelButton({ label: options.cancelLabel }),
+        Dialog.okButton({ label: options.okLabel })
+      ],
+      focusNodeSelector: 'input'
+    });
+  }
 }
 
 /**
@@ -205,13 +273,20 @@ class InputDialogBase<T> extends Widget implements Dialog.IBodyWidget<T> {
     super();
     this.addClass(INPUT_DIALOG_CLASS);
 
+    this._input = document.createElement('input');
+    this._input.classList.add('jp-mod-styled');
+    this._input.id = 'jp-dialog-input-id';
+
     if (label !== undefined) {
-      let labelElement = document.createElement('label');
+      const labelElement = document.createElement('label');
       labelElement.textContent = label;
+      labelElement.htmlFor = this._input.id;
 
       // Initialize the node
       this.node.appendChild(labelElement);
     }
+
+    this.node.appendChild(this._input);
   }
 
   /** Input HTML node */
@@ -229,14 +304,10 @@ class InputBooleanDialog extends InputDialogBase<boolean> {
    */
   constructor(options: InputDialog.IBooleanOptions) {
     super(options.label);
+    this.addClass(INPUT_BOOLEAN_DIALOG_CLASS);
 
-    this._input = document.createElement('input');
-    this._input.classList.add('jp-mod-styled');
     this._input.type = 'checkbox';
     this._input.checked = options.value ? true : false;
-
-    // Initialize the node
-    this.node.appendChild(this._input);
   }
 
   /**
@@ -259,13 +330,8 @@ class InputNumberDialog extends InputDialogBase<number> {
   constructor(options: InputDialog.INumberOptions) {
     super(options.label);
 
-    this._input = document.createElement('input', {});
-    this._input.classList.add('jp-mod-styled');
     this._input.type = 'number';
     this._input.value = options.value ? options.value.toString() : '0';
-
-    // Initialize the node
-    this.node.appendChild(this._input);
   }
 
   /**
@@ -292,16 +358,64 @@ class InputTextDialog extends InputDialogBase<string> {
   constructor(options: InputDialog.ITextOptions) {
     super(options.label);
 
-    this._input = document.createElement('input', {});
-    this._input.classList.add('jp-mod-styled');
     this._input.type = 'text';
     this._input.value = options.text ? options.text : '';
     if (options.placeholder) {
       this._input.placeholder = options.placeholder;
     }
+    this._initialSelectionRange = Math.min(
+      this._input.value.length,
+      Math.max(0, options.selectionRange ?? this._input.value.length)
+    );
+  }
 
-    // Initialize the node
-    this.node.appendChild(this._input);
+  /**
+   *  A message handler invoked on an `'after-attach'` message.
+   */
+  protected onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    if (this._initialSelectionRange > 0 && this._input.value) {
+      this._input.setSelectionRange(0, this._initialSelectionRange);
+    }
+  }
+
+  /**
+   * Get the text specified by the user
+   */
+  getValue(): string {
+    return this._input.value;
+  }
+
+  private _initialSelectionRange: number;
+}
+
+/**
+ * Widget body for input password dialog
+ */
+class InputPasswordDialog extends InputDialogBase<string> {
+  /**
+   * InputPasswordDialog constructor
+   *
+   * @param options Constructor options
+   */
+  constructor(options: InputDialog.ITextOptions) {
+    super(options.label);
+
+    this._input.type = 'password';
+    this._input.value = options.text ? options.text : '';
+    if (options.placeholder) {
+      this._input.placeholder = options.placeholder;
+    }
+  }
+
+  /**
+   *  A message handler invoked on an `'after-attach'` message.
+   */
+  protected onAfterAttach(msg: Message): void {
+    super.onAfterAttach(msg);
+    if (this._input.value) {
+      this._input.select();
+    }
   }
 
   /**
@@ -335,7 +449,7 @@ class InputItemsDialog extends InputDialogBase<string> {
 
     this._list = document.createElement('select');
     options.items.forEach((item, index) => {
-      let option = document.createElement('option');
+      const option = document.createElement('option');
       if (index === defaultIndex) {
         option.selected = true;
         current = item;
@@ -347,23 +461,21 @@ class InputItemsDialog extends InputDialogBase<string> {
 
     if (options.editable) {
       /* Use of list and datalist */
-      let data = document.createElement('datalist');
+      const data = document.createElement('datalist');
       data.id = 'input-dialog-items';
       data.appendChild(this._list);
 
-      this._input = document.createElement('input', {});
-      this._input.classList.add('jp-mod-styled');
       this._input.type = 'list';
       this._input.value = current;
       this._input.setAttribute('list', data.id);
       if (options.placeholder) {
         this._input.placeholder = options.placeholder;
       }
-      this.node.appendChild(this._input);
       this.node.appendChild(data);
     } else {
       /* Use select directly */
-      this.node.appendChild(Styling.wrapSelect(this._list));
+      this._input.remove();
+      this.node.appendChild(this._list);
     }
   }
 
@@ -380,4 +492,60 @@ class InputItemsDialog extends InputDialogBase<string> {
 
   private _list: HTMLSelectElement;
   private _editable: boolean;
+}
+
+/**
+ * Widget body for input list dialog
+ */
+class InputMultipleItemsDialog extends InputDialogBase<string> {
+  /**
+   * InputMultipleItemsDialog constructor
+   *
+   * @param options Constructor options
+   */
+  constructor(options: InputDialog.IMultipleItemsOptions) {
+    super(options.label);
+
+    let defaults = options.defaults || [];
+
+    this._list = document.createElement('select');
+    this._list.setAttribute('multiple', '');
+
+    options.items.forEach(item => {
+      const option = document.createElement('option');
+      option.value = item;
+      option.textContent = item;
+      this._list.appendChild(option);
+    });
+
+    // use the select
+    this._input.remove();
+    this.node.appendChild(this._list);
+
+    // select the current ones
+    const htmlOptions = this._list.options;
+    for (let i: number = 0; i < htmlOptions.length; i++) {
+      const option = htmlOptions[i];
+      if (defaults.includes(option.value)) {
+        option.selected = true;
+      } else {
+        option.selected = false;
+      }
+    }
+  }
+
+  /**
+   * Get the user choices
+   */
+  getValue(): string[] {
+    let result = [];
+    for (let opt of this._list.options) {
+      if (opt.selected && !opt.classList.contains('hidden')) {
+        result.push(opt.value || opt.text);
+      }
+    }
+    return result;
+  }
+
+  private _list: HTMLSelectElement;
 }

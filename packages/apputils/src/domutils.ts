@@ -1,11 +1,9 @@
 // Copyright (c) Jupyter Development Team.
 // Distributed under the terms of the Modified BSD License.
 
-import { ArrayExt } from '@phosphor/algorithm';
-
-import { ElementExt } from '@phosphor/domutils';
-
-import { UUID } from '@phosphor/coreutils';
+import { ArrayExt } from '@lumino/algorithm';
+import { UUID } from '@lumino/coreutils';
+import { ElementExt } from '@lumino/domutils';
 
 /**
  * The namespace for DOM utilities.
@@ -32,6 +30,18 @@ export namespace DOMUtils {
     className: string
   ): HTMLElement {
     return parent.querySelector(`.${className}`) as HTMLElement;
+  }
+
+  /**
+   * Find the first element matching a class name.
+   */
+  export function findElements(
+    parent: HTMLElement,
+    className: string
+  ): HTMLCollectionOf<HTMLElement> {
+    return parent.getElementsByClassName(
+      className
+    ) as HTMLCollectionOf<HTMLElement>;
   }
 
   /**

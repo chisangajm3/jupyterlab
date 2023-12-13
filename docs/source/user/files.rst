@@ -1,10 +1,13 @@
+.. Copyright (c) Jupyter Development Team.
+.. Distributed under the terms of the Modified BSD License.
+
 .. _working-with-files:
 
 Working with Files
-------------------
+==================
 
 Opening Files
-~~~~~~~~~~~~~
+-------------
 
 The file browser and File menu enable you to work with files and
 directories on your system. This includes opening, creating, deleting,
@@ -12,15 +15,17 @@ renaming, downloading, copying, and sharing files and directories.
 
 The file browser is in the left sidebar Files tab:
 
-.. image:: images/file_menu_left.png
+.. image:: ../images/files-menu-left.png
    :align: center
    :class: jp-screenshot
+   :alt: Arrow pointing to the file browser in the upper left sidebar.
 
 Many actions on files can also be carried out in the File menu:
 
-.. image:: images/file_menu_top.png
+.. image:: ../images/files-menu-top.png
    :align: center
    :class: jp-screenshot
+   :alt: The File menu open including options like "New", "Save All."
 
 .. _open-file:
 
@@ -84,18 +89,20 @@ Right-click on a file or directory and select "Copy Shareable Link" to
 copy a URL that can be used to open JupyterLab with that file or
 directory open.
 
-.. image:: images/shareable_link.png
+.. image:: ../images/files-shareable-link.png
    :align: center
    :class: jp-screenshot
+   :alt: The Copy Shareable Link option in the context menu of a file. Copy Shareable Link is the last entry on the list.
 
 .. _file-copy-path:
 
 Right-click on a file or directory and select "Copy Path" to copy the
 filesystem relative path. This can be used for passing arguments to open
 files in functions called in various kernels.
+If you want to copy the filesystem absolute path, you must add the jupyterlab server config `LabServerApp.copy_absolute_path=True` and `ServerApp.root_dir = 'xxx'`.
 
 Creating Files and Activities
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-----------------------------
 
 .. _file-create-plus:
 
@@ -113,9 +120,10 @@ which enables you to pick an activity and kernel:
 
 You can also create new documents or activities using the File menu:
 
-.. image:: images/file_create_text_file.png
+.. image:: ../images/files-create-text-file.png
    :align: center
    :class: jp-screenshot
+   :alt: The context menu entry for creating a new file.
 
 .. _current-directory:
 
@@ -142,7 +150,7 @@ from the context menu:
   </div>
 
 Uploading and Downloading
-~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------
 
 .. _file-upload:
 
@@ -166,3 +174,11 @@ the file browser and selecting “Download” from the context menu:
   <div class="jp-youtube-video">
      <iframe src="https://www.youtube-nocookie.com/embed/Wl7Ozl6rMcc?rel=0&amp;showinfo=0" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
   </div>
+
+Displaying Hidden files
+-----------------------
+
+Hidden files and folders can be displayed in JupyterLab by combining two parameters:
+
+1. First the server should be allowed to serve hidden files by setting ``ContentsManager.allow_hidden = True``; see `server documentation <https://jupyter-server.readthedocs.io/en/latest/users/configuration.html>`_.
+2. Then you will be able to display or hide the hidden files through the menu ``View`` -> ``Show Hidden Files``.
